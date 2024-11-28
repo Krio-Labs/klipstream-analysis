@@ -1,0 +1,11 @@
+raw_pipeline/bin/TwitchDownloaderCLI* filter=lfs diff=lfs merge=lfs -text
+raw_pipeline/bin/ffmpeg* filter=lfs diff=lfs merge=lfs -text
+analysis_pipeline/chat/models/*.pkl filter=lfs diff=lfs merge=lfs -text
+raw_pipeline/bin/TwitchDownloaderCLI filter=lfs diff=lfs merge=lfs -text
+raw_pipeline/bin/TwitchDownloaderCLI_mac filter=lfs diff=lfs merge=lfs -text
+raw_pipeline/bin/TwitchDownloaderCLI.exe filter=lfs diff=lfs merge=lfs -text
+raw_pipeline/bin/ffmpeg filter=lfs diff=lfs merge=lfs -text
+raw_pipeline/bin/ffmpeg_mac filter=lfs diff=lfs merge=lfs -text
+raw_pipeline/bin/ffmpeg.exe filter=lfs diff=lfs merge=lfs -text
+analysis_pipeline/chat/models/emotion_classifier_pipe_lr.pkl filter=lfs diff=lfs merge=lfs -text
+analysis_pipeline/chat/models/highlight_classifier_pipe_lr.pkl filter=lfs diff=lfs merge=lfs -text
