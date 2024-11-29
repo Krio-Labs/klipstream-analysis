@@ -1,18 +1,32 @@
+# Audio processing
 pydub
 librosa
 soundfile
+
+# Data processing and visualization 
 numpy
 pandas
 matplotlib
 seaborn
 scipy
 tqdm
+
+# Machine learning and AI
 transformers
 torch
 google-generativeai
 assemblyai
+
+# System utilities
+psutil
+
+# HTTP and async
 httpx
 aiohttp
 aiofiles
+
+# Cloud Functions
 functions-framework==3.*
-pydantic
+
+# Environment variables
+python-dotenv
