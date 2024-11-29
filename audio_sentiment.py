@@ -15,6 +15,7 @@ import json
 import google.generativeai as genai
 import random
 import time
+from dotenv import load_dotenv
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -144,11 +145,14 @@ def clean_up_workers():
         logging.error(f"Error during cleanup: {str(e)}")
 
 def main(input_file='outputs/audio_paragraphs.csv', api_key=None):
-    # Validate API key first
+    # Load environment variables
+    load_dotenv()
+    
+    # Get API key from environment if not provided
     if not api_key:
         api_key = os.getenv('GOOGLE_API_KEY')
         if not api_key:
-            raise ValueError("API key must be provided either through function parameter or GOOGLE_API_KEY environment variable")
+            raise ValueError("GOOGLE_API_KEY environment variable must be set")
 
     try:
         # Read the existing CSV file
