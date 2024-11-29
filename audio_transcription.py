@@ -4,6 +4,7 @@ import assemblyai as aai
 import requests
 import csv
 from pathlib import Path
+from dotenv import load_dotenv
 
 class TranscriptionHandler:
     def __init__(self):
@@ -24,7 +25,15 @@ class TranscriptionHandler:
 
     def _setup_assemblyai(self):
         """Setup AssemblyAI with API key"""
-        aai.settings.api_key = "c37776f0425148949b6becd9f145550a"
+        # Load environment variables
+        load_dotenv()
+        
+        # Get API key from environment
+        api_key = os.getenv('ASSEMBLYAI_API_KEY')
+        if not api_key:
+            raise ValueError("ASSEMBLYAI_API_KEY environment variable must be set")
+            
+        aai.settings.api_key = api_key
         logging.info("AssemblyAI API configured")
 
     async def process_audio_files(self, input_dir="outputs"):
