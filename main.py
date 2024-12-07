@@ -14,6 +14,7 @@ from audio_analysis import plot_metrics
 from audio_waveform import process_audio_file
 from chat_download import download_chat
 from chat_processor import process_chat_data
+from chat_sentiment import analyze_chat_sentiment
 
 def cleanup():
     try:
@@ -101,8 +102,17 @@ async def run_pipeline(url: str):
             # Add chat processing step
             process_chat_data(video_id)
             logging.info("Chat data processed successfully")
+            
+            # Add chat sentiment analysis
+            logging.info("Step 7: Analyzing chat sentiment...")
+            sentiment_output = analyze_chat_sentiment(video_id)
+            if sentiment_output:
+                logging.info(f"Chat sentiment analysis completed. Results saved to: {sentiment_output}")
+            else:
+                logging.error("Chat sentiment analysis failed")
+                
         except Exception as e:
-            logging.error(f"Failed to download or process chat: {e}")
+            logging.error(f"Failed to process chat data: {e}")
             # Continue pipeline even if chat operations fail
             logging.warning("Continuing pipeline without chat data")
         

@@ -237,6 +237,10 @@ def process_chat_data(video_id):
         filtered_df.to_csv(preprocessed_data_file, index=False)
         print(f"Preprocessed chat data saved to {preprocessed_data_file}")
         
+        # Delete the input file after successful processing
+        os.remove(raw_data_file)
+        print(f"Deleted input file: {raw_data_file}")
+        
     except Exception as e:
         print(f"Error processing chat data: {e}")
 
