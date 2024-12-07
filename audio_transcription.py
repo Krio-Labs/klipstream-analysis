@@ -1,9 +1,8 @@
 import os
 import logging
 import assemblyai as aai
-import requests
+import aiohttp
 import csv
-from pathlib import Path
 from dotenv import load_dotenv
 
 class TranscriptionHandler:
@@ -36,32 +35,68 @@ class TranscriptionHandler:
         aai.settings.api_key = api_key
         logging.info("AssemblyAI API configured")
 
-    async def process_audio_files(self, input_dir="outputs"):
-        """Process all audio files in the specified directory"""
+    async def process_audio_files(self, video_id, input_dir="outputs"):
+        """Process audio files in the specified directory for a specific video ID"""
         try:
-            # Get all audio files
-            audio_files = [f for f in os.listdir(input_dir) 
-                         if f.endswith(('.mp3', '.wav', '.m4a', '.flac'))]
+            # Look for specific audio file with video ID
+            audio_file = os.path.join(input_dir, f"audio_{video_id}.wav")
+            
+            if not os.path.exists(audio_file):
+                logging.error(f"Audio file not found: {audio_file}")
+                return None
 
-            if not audio_files:
-                logging.info(f"No audio files found in {input_dir}")
-                return
+            logging.info(f"Processing {audio_file}...")
+            
+            # Configure AssemblyAI
+            aai.settings.api_key = os.getenv('ASSEMBLYAI_API_KEY')
+            
+            # Transcribe the audio file
+            transcript = aai.Transcriber().transcribe(audio_file)
+            
+            # Save word-level timestamps
+            words_file = os.path.join(input_dir, f"audio_{video_id}_words.csv")
+            with open(words_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(['word', 'start_time', 'end_time', 'confidence'])
+                for word in transcript.words:
+                    writer.writerow([
+                        word.text,
+                        word.start / 1000,  # Convert to seconds
+                        word.end / 1000,
+                        word.confidence
+                    ])
+            logging.info(f"Word timestamps saved to: {words_file}")
 
-            for audio_file in audio_files:
-                input_path = os.path.join(input_dir, audio_file)
-                base_name = Path(audio_file).stem
-                
-                logging.info(f"Processing {audio_file}...")
-                
-                try:
-                    transcript = await self._transcribe_audio(input_path, base_name, input_dir)
-                    logging.info(f"Successfully processed {audio_file}")
-                except Exception as e:
-                    logging.error(f"Error processing {audio_file}: {str(e)}")
-                    continue
+            # Get paragraphs using dedicated endpoint
+            paragraphs_file = os.path.join(input_dir, f"audio_{video_id}_paragraphs.csv")
+            headers = {'authorization': os.getenv('ASSEMBLYAI_API_KEY')}
+            paragraphs_endpoint = f"https://api.assemblyai.com/v2/transcript/{transcript.id}/paragraphs"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(paragraphs_endpoint, headers=headers) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        paragraphs = data['paragraphs']
+                        
+                        # Save paragraphs to CSV
+                        with open(paragraphs_file, 'w', newline='', encoding='utf-8') as f:
+                            writer = csv.writer(f)
+                            writer.writerow(['start_time', 'end_time', 'text'])
+                            for para in paragraphs:
+                                writer.writerow([
+                                    para['start'] / 1000,  # Convert to seconds
+                                    para['end'] / 1000,
+                                    para['text']
+                                ])
+                        logging.info(f"Paragraphs saved to: {paragraphs_file}")
+                    else:
+                        logging.error(f"Failed to get paragraphs: {response.status}")
+                        raise Exception(f"Failed to get paragraphs: {response.status}")
+
+            return transcript
 
         except Exception as e:
-            logging.error(f"Process failed: {str(e)}")
+            logging.error(f"Transcription error: {str(e)}")
             raise
 
     async def _transcribe_audio(self, audio_file, base_name, input_dir):
@@ -129,9 +164,15 @@ class TranscriptionHandler:
 
 if __name__ == "__main__":
     import asyncio
+    import argparse
+    
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description='Process audio transcription')
+    parser.add_argument('--video-id', type=str, required=True, help='Video ID to process')
+    args = parser.parse_args()
     
     async def main():
         handler = TranscriptionHandler()
-        await handler.process_audio_files()
+        await handler.process_audio_files(args.video_id)  # Pass the video_id here
 
     asyncio.run(main())

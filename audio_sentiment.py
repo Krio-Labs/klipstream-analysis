@@ -1,19 +1,12 @@
 import pandas as pd
-from transformers import pipeline
-import torch
-import platform
 import logging
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-import numpy as np
+from concurrent.futures import ProcessPoolExecutor
 import psutil
-from functools import partial
-from multiprocessing import Pool, cpu_count
+from multiprocessing import cpu_count
 from pathlib import Path
-from collections import defaultdict
 import os
 import json
 import google.generativeai as genai
-import random
 import time
 from dotenv import load_dotenv
 
@@ -122,15 +115,19 @@ def process_chunk(paragraphs, start_times, end_times, batch_delay=0.1):
 def clean_up_workers():
     """Kill any remaining worker processes and cleanup resources."""
     try:
+        # Add delay before cleanup
+        time.sleep(2)  # Give GRPC time to shutdown gracefully
+        
         # Kill child processes
         current_process = psutil.Process()
         children = current_process.children(recursive=True)
         for child in children:
             try:
-                child.kill()
-            except psutil.NoSuchProcess:
-                pass
-
+                child.terminate()  # Use terminate instead of kill for graceful shutdown
+                child.wait(timeout=3)  # Wait for process to terminate
+            except (psutil.NoSuchProcess, psutil.TimeoutExpired):
+                child.kill()  # Force kill if terminate doesn't work
+                
         # Clean up multiprocessing resources - Python 3.12 compatible
         import multiprocessing.resource_tracker
         try:
@@ -144,20 +141,40 @@ def clean_up_workers():
     except Exception as e:
         logging.error(f"Error during cleanup: {str(e)}")
 
-def main(input_file='outputs/audio_paragraphs.csv', api_key=None):
+def sentiment_analysis(video_id):
+    """Main function to process audio sentiment analysis for a specific video
+    
+    Args:
+        video_id (str): The ID of the video to process
+        api_key (str): Google API key for sentiment analysis
+    """
     # Load environment variables
     load_dotenv()
     
-    # Get API key from environment if not provided
-    if not api_key:
+    try:
+        # Determine input file path
+        if video_id:
+            input_file = f'outputs/audio_{video_id}_paragraphs.csv'
+        else:
+            # Default to first audio file found if no video ID provided
+            audio_files = list(Path('outputs').glob('audio_*_paragraphs.csv'))
+            if not audio_files:
+                raise FileNotFoundError("No audio paragraph files found in outputs directory")
+            input_file = str(audio_files[0])
+            # Extract video ID from filename
+            video_id = Path(input_file).stem.split('_')[1]
+        
+        logging.info(f"Processing video ID: {video_id}")
+        
+        # Get API key from environment if not provided
         api_key = os.getenv('GOOGLE_API_KEY')
         if not api_key:
             raise ValueError("GOOGLE_API_KEY environment variable must be set")
 
-    try:
         # Read the existing CSV file
         logging.info(f"Reading input file: {input_file}")
         df = pd.read_csv(input_file)
+        
         paragraphs = df['text'].tolist()
         start_times = df['start_time'].tolist()
         end_times = df['end_time'].tolist()
@@ -213,8 +230,12 @@ def main(input_file='outputs/audio_paragraphs.csv', api_key=None):
         df.to_csv(input_file, index=False)
         logging.info("Save complete")
         
+        # Add explicit return True on success
+        return True
+        
     except Exception as e:
-        logging.error(f"Error in main: {str(e)}")
+        logging.error(f"Error in sentiment_analysis: {str(e)}")
+        return False
     finally:
         clean_up_workers()
 
@@ -225,5 +246,11 @@ if __name__ == '__main__':
     api_key = os.getenv('GOOGLE_API_KEY')
     if not api_key:
         raise ValueError("GOOGLE_API_KEY environment variable must be set")
-        
-    main(api_key=api_key)
+    
+    # Parse command line arguments if needed
+    import argparse
+    parser = argparse.ArgumentParser(description='Process video sentiment analysis')
+    parser.add_argument('--video-id', type=str, help='Video ID to process')
+    args = parser.parse_args()
+    
+    sentiment_analysis(video_id=args.video_id)
