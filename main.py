@@ -4,13 +4,23 @@ from pathlib import Path
 import json
 import warnings
 import multiprocessing
+import atexit
 
 from audio_downloader import TwitchVideoDownloader
 from audio_transcription import TranscriptionHandler
 from audio_sentiment import sentiment_analysis
 from audio_analysis import analyze_transcription_highlights
-from audio_analysis import plot_audio_waveform, plot_metrics
+from audio_analysis import plot_metrics
 from audio_waveform import process_audio_file
+from chat_download import download_chat
+
+def cleanup():
+    try:
+        multiprocessing.resource_tracker._resource_tracker = None
+    except Exception:
+        pass
+
+atexit.register(cleanup)
 
 async def run_pipeline(url: str):
     """
@@ -21,13 +31,19 @@ async def run_pipeline(url: str):
         output_dir = Path("outputs")
         output_dir.mkdir(exist_ok=True)
         
+        # Create data directory for chat files
+        data_dir = Path("data")
+        data_dir.mkdir(exist_ok=True)
+        
+        # Get video ID early since we'll need it for multiple steps
+        downloader = TwitchVideoDownloader()
+        video_id = downloader.extract_video_id(url)
+        
         # Step 1: Download audio
         logging.info("Step 1: Downloading audio from Twitch...")
-        downloader = TwitchVideoDownloader()
         audio_file = await downloader.process_video(url)
         if not audio_file:
             raise RuntimeError("Failed to download audio file")
-        video_id = downloader.extract_video_id(url)
         logging.info(f"Audio downloaded successfully: {audio_file}")
 
         # Step 2: Transcribe audio
@@ -67,18 +83,24 @@ async def run_pipeline(url: str):
         if grouped_data is not None:
             logging.info("Chat highlights analysis completed")
             
-            # Plot audio visualizations
-            audio_path = str(audio_file)
-            plot_audio_waveform(audio_path, str(output_dir), video_id)
-            logging.info("Audio waveform plotted")
-            
             # Plot metrics with video_id
-            plot_metrics(grouped_data, str(output_dir), video_id)
+            plot_metrics(str(output_dir), video_id)
             logging.info("Metrics plotting completed")
         else:
             raise RuntimeError("Chat highlights analysis failed")
         
         logging.info("Audio analysis completed")
+
+        # Step 6: Download chat
+        logging.info("Step 6: Downloading chat data...")
+        try:
+            chat_file = download_chat(video_id, data_dir)
+            logging.info(f"Chat data downloaded successfully: {chat_file}")
+        except Exception as e:
+            logging.error(f"Failed to download chat: {e}")
+            # Continue pipeline even if chat download fails
+            logging.warning("Continuing pipeline without chat data")
+        
         logging.info("Pipeline completed successfully!")
         return True
 
