@@ -13,6 +13,7 @@ from audio_analysis import analyze_transcription_highlights
 from audio_analysis import plot_metrics
 from audio_waveform import process_audio_file
 from chat_download import download_chat
+from chat_processor import process_chat_data
 
 def cleanup():
     try:
@@ -91,14 +92,18 @@ async def run_pipeline(url: str):
         
         logging.info("Audio analysis completed")
 
-        # Step 6: Download chat
-        logging.info("Step 6: Downloading chat data...")
+        # Step 6: Download and process chat
+        logging.info("Step 6: Downloading and processing chat data...")
         try:
             chat_file = download_chat(video_id, data_dir)
             logging.info(f"Chat data downloaded successfully: {chat_file}")
+            
+            # Add chat processing step
+            process_chat_data(video_id)
+            logging.info("Chat data processed successfully")
         except Exception as e:
-            logging.error(f"Failed to download chat: {e}")
-            # Continue pipeline even if chat download fails
+            logging.error(f"Failed to download or process chat: {e}")
+            # Continue pipeline even if chat operations fail
             logging.warning("Continuing pipeline without chat data")
         
         logging.info("Pipeline completed successfully!")
