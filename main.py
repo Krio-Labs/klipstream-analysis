@@ -1,22 +1,16 @@
 import asyncio
 import logging
-import os
 from pathlib import Path
+import json
+import warnings
+import multiprocessing
+
 from audio_downloader import TwitchVideoDownloader
 from audio_transcription import TranscriptionHandler
-from audio_sentiment import main as sentiment_analysis
+from audio_sentiment import sentiment_analysis
+from audio_analysis import analyze_transcription_highlights
+from audio_analysis import plot_audio_waveform, plot_metrics
 from audio_waveform import process_audio_file
-from audio_analysis import analyze_chat_highlights, plot_audio_waveform, separate_speech_and_noise, plot_combined_loudness
-
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('pipeline.log'),
-        logging.StreamHandler()
-    ]
-)
 
 async def run_pipeline(url: str):
     """
@@ -31,48 +25,60 @@ async def run_pipeline(url: str):
         logging.info("Step 1: Downloading audio from Twitch...")
         downloader = TwitchVideoDownloader()
         audio_file = await downloader.process_video(url)
+        if not audio_file:
+            raise RuntimeError("Failed to download audio file")
+        video_id = downloader.extract_video_id(url)
         logging.info(f"Audio downloaded successfully: {audio_file}")
 
         # Step 2: Transcribe audio
         logging.info("Step 2: Transcribing audio...")
         transcriber = TranscriptionHandler()
-        await transcriber.process_audio_files()
+        transcription_result = await transcriber.process_audio_files(video_id)
+        if not transcription_result:
+            raise RuntimeError("Transcription failed")
         logging.info("Transcription completed")
 
         # Step 3: Sentiment analysis
         logging.info("Step 3: Performing sentiment analysis...")
-        api_key = os.getenv('GOOGLE_API_KEY')
-        if not api_key:
-            raise ValueError("GOOGLE_API_KEY environment variable must be set")
-        
-        video_id = downloader.extract_video_id(url)
-        paragraphs_file = output_dir / f"audio_{video_id}_paragraphs.csv"
-        await sentiment_analysis(input_file=str(paragraphs_file), api_key=api_key)
-        logging.info("Sentiment analysis completed")
+        sentiment_result = sentiment_analysis(video_id=video_id)
+        if not sentiment_result:
+            logging.error("Sentiment analysis failed to complete successfully")
+            raise RuntimeError("Sentiment analysis failed")
+        logging.info("Sentiment analysis completed successfully")
 
         # Step 4: Generate waveform
         logging.info("Step 4: Generating audio waveform...")
-        waveform_data = process_audio_file()
-        waveform_file = output_dir / "audio_waveform.json"
-        logging.info(f"Waveform data generated: {len(waveform_data)} points")
+        waveform_data = process_audio_file(video_id)
+        if waveform_data:
+            waveform_file = output_dir / f"audio_{video_id}_waveform.json"
+            with open(waveform_file, 'w') as f:
+                json.dump(waveform_data, f)
+            logging.info(f"Waveform data generated: {len(waveform_data)} points")
+        else:
+            logging.error("Failed to generate waveform data")
 
         # Step 5: Audio analysis
         logging.info("Step 5: Performing audio analysis...")
-        
-        # Analyze chat highlights
-        await analyze_chat_highlights(str(paragraphs_file), str(output_dir))
-        
-        # Plot audio visualizations
-        audio_path = str(audio_file)
-        plot_audio_waveform(audio_path, str(output_dir))
-        
-        # Separate speech and noise, then plot combined loudness
-        speech_path, noise_path = separate_speech_and_noise(audio_path, str(output_dir))
-        if speech_path and noise_path:
-            plot_combined_loudness(audio_path, speech_path, noise_path, str(output_dir))
+        paragraphs_file = output_dir / f"audio_{video_id}_paragraphs.csv"
+        if not paragraphs_file.exists():
+            raise FileNotFoundError(f"Required file not found: {paragraphs_file}")
+            
+        grouped_data = analyze_transcription_highlights(str(paragraphs_file), str(output_dir))
+        if grouped_data is not None:
+            logging.info("Chat highlights analysis completed")
+            
+            # Plot audio visualizations
+            audio_path = str(audio_file)
+            plot_audio_waveform(audio_path, str(output_dir), video_id)
+            logging.info("Audio waveform plotted")
+            
+            # Plot metrics with video_id
+            plot_metrics(grouped_data, str(output_dir), video_id)
+            logging.info("Metrics plotting completed")
+        else:
+            raise RuntimeError("Chat highlights analysis failed")
         
         logging.info("Audio analysis completed")
-        
         logging.info("Pipeline completed successfully!")
         return True
 
@@ -80,20 +86,31 @@ async def run_pipeline(url: str):
         logging.error(f"Pipeline failed: {str(e)}")
         raise
 
-async def main():
-    """Main entry point"""
-    try:
-        # Get Twitch video URL from user
-        url = input("Enter Twitch video URL: ")
-        
-        # Run the pipeline
-        await run_pipeline(url)
-        
-    except KeyboardInterrupt:
-        logging.info("Pipeline interrupted by user")
-    except Exception as e:
-        logging.error(f"Error: {str(e)}")
-        return False
-
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    # Filter resource tracker warnings
+    warnings.filterwarnings("ignore", category=UserWarning, module="multiprocessing.resource_tracker")
+    
+    # Set start method for multiprocessing
+    multiprocessing.set_start_method('spawn', force=True)
+    
+    import argparse
+    
+    # Set up logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Process Twitch VOD audio analysis')
+    parser.add_argument('url', type=str, help='Twitch VOD URL to process')
+    args = parser.parse_args()
+    
+    # Run the pipeline
+    try:
+        asyncio.run(run_pipeline(args.url))
+    except KeyboardInterrupt:
+        logging.info("Process interrupted by user")
+    except Exception as e:
+        logging.error(f"Process failed: {str(e)}")
+        raise

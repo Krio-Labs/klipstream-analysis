@@ -6,23 +6,21 @@ import json
 import os
 from pathlib import Path
 
-def process_audio_file(samples_size: int = 20000, duration: float = None) -> List[float]:    
+def process_audio_file(video_id: str, samples_size: int = 20000) -> List[float]:    
     """
-    Process an audio file from local outputs folder and return normalized amplitude data.
+    Process an audio file for a specific video ID and return normalized amplitude data.
     """
-    # Get local outputs folder path
+    # Get specific audio file path
     outputs_dir = "outputs"
+    file_path = Path(outputs_dir) / f"audio_{video_id}.wav"
     
-    # Find first MP3 file in outputs folder
-    mp3_files = list(Path(outputs_dir).glob("*.mp3"))
-    if not mp3_files:
-        raise FileNotFoundError(f"No MP3 files found in {outputs_dir}")
+    if not file_path.exists():
+        raise FileNotFoundError(f"Audio file not found: {file_path}")
     
-    file_path = str(mp3_files[0])
     print(f"Processing: {file_path}")
     
     # Load audio file using pydub
-    audio = AudioSegment.from_mp3(file_path)
+    audio = AudioSegment.from_wav(str(file_path))
     
     # Convert to numpy array more efficiently
     samples = np.frombuffer(audio.raw_data, dtype=np.int16)

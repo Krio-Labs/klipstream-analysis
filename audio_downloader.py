@@ -3,13 +3,11 @@ import os
 import platform
 import re
 import logging
-import aiohttp
 import asyncio
 from tqdm import tqdm
 import shutil
-import requests
-import csv
 from pathlib import Path
+import psutil
 
 # Define global paths
 DOWNLOADS_DIR = Path("downloads")
@@ -80,11 +78,13 @@ class TwitchVideoDownloader:
                     raise
 
     def _get_optimal_thread_count(self, is_download=True):
-        """Determine optimal thread count based on CPU cores and operation type"""
-        cpu_count = os.cpu_count() or 4
-        if is_download:
-            return min(cpu_count * 2, 16)  # More aggressive for downloads
-        return min(int(cpu_count * 1.5), 12)  # Conservative for conversion
+        """Determine optimal thread count based on CPU cores"""
+        try:
+            cpu_count = psutil.cpu_count(logical=True)
+            return min(cpu_count * 2, 16) if is_download else min(max(2, cpu_count - 2), 8)
+        except Exception as e:
+            logging.warning(f"Error determining thread count: {str(e)}")
+            return 4  # Safe default
 
     async def _download_video(self, video_id, output_file, temp_path):
         """Download video using TwitchDownloaderCLI"""
@@ -106,30 +106,37 @@ class TwitchVideoDownloader:
         )
         return process.returncode == 0
 
-    async def _convert_to_mp3(self, input_file, output_file):
-        """Convert video to MP3 format"""
-        conversion_threads = self._get_optimal_thread_count(is_download=False)
-        duration = self._get_video_duration(input_file)
-        
-        command = [
-            "ffmpeg",
-            "-i", input_file,
-            "-vn",
-            "-ar", "44100",
-            "-ac", "2",
-            "-b:a", "192k",
-            "-threads", str(conversion_threads),
-            "-f", "mp3",
-            "-progress", "pipe:1",
-            output_file
-        ]
-        
-        process = await self._run_process_with_progress(
-            command, 
-            "Conversion Progress",
-            duration=duration
-        )
-        return process.returncode == 0
+    async def _convert_to_wav(self, input_file, output_file):
+        """Convert video to WAV using optimized FFmpeg settings"""
+        try:
+            cpu_cores = max(1, psutil.cpu_count(logical=False) - 2)
+            command = [
+                'ffmpeg',
+                '-i', input_file,
+                '-vn',
+                '-acodec', 'pcm_s16le',
+                '-ar', '16000',
+                '-ac', '1',
+                '-threads', str(cpu_cores),
+                '-y',
+                output_file
+            ]
+            
+            process = await self._run_process_with_progress(
+                command,
+                "Converting to WAV",
+                progress_pattern="time=",
+                duration=self._get_video_duration(input_file)
+            )
+
+            if process.returncode != 0:
+                raise Exception("FFmpeg conversion failed")
+
+            return output_file
+
+        except Exception as e:
+            logging.error(f"Error converting to WAV: {str(e)}")
+            raise
 
     async def process_video(self, url):
         """Main method to process video: download and convert"""
@@ -137,7 +144,7 @@ class TwitchVideoDownloader:
             # Get video ID and create paths
             video_id = self.extract_video_id(url)
             video_file = OUTPUT_DIR / "video.mp4"
-            audio_file = OUTPUT_DIR / f"audio_{video_id}.mp3"
+            audio_file = OUTPUT_DIR / f"audio_{video_id}.wav"
             
             # Clean existing files
             self._clean_existing_files([video_file, audio_file])
@@ -146,17 +153,19 @@ class TwitchVideoDownloader:
             if not await self._download_video(video_id, str(video_file), str(TEMP_DIR)):
                 raise Exception("Video download failed")
                 
-            if not await self._convert_to_mp3(str(video_file), str(audio_file)):
+            if not await self._convert_to_wav(str(video_file), str(audio_file)):
                 raise Exception("Audio conversion failed")
                 
-            # Cleanup
+            # Cleanup all temporary files and folders
             self._cleanup_files(TEMP_DIR, video_file)
+            self._cleanup_downloads_folder()
             
             return audio_file
             
         except Exception as e:
             logging.error(f"Process failed: {str(e)}")
             self._cleanup_files(TEMP_DIR, video_file)
+            self._cleanup_downloads_folder()
             raise
 
     def extract_video_id(self, url):
@@ -184,6 +193,15 @@ class TwitchVideoDownloader:
         except OSError as e:
             logging.warning(f"Error during cleanup: {e}")
 
+    def _cleanup_downloads_folder(self):
+        """Clean up the downloads folder"""
+        try:
+            if DOWNLOADS_DIR.exists():
+                shutil.rmtree(DOWNLOADS_DIR)
+                logging.info(f"Cleaned up downloads directory: {DOWNLOADS_DIR}")
+        except OSError as e:
+            logging.warning(f"Error cleaning up downloads directory: {e}")
+
     async def _run_process_with_progress(self, command, description, progress_pattern=None, duration=None):
         """Run a process with progress bar tracking"""
         logging.info(f"Running command: {' '.join(command)}")
@@ -195,35 +213,29 @@ class TwitchVideoDownloader:
                 stderr=asyncio.subprocess.PIPE
             )
             
-            # Initialize progress bar
             pbar = tqdm(desc=description, total=100, unit="%")
             last_progress = 0
             
             while True:
-                # Read line from stdout or stderr
                 line = await process.stderr.readline()
                 if not line:
                     break
                     
                 line = line.decode('utf-8', errors='ignore').strip()
                 
-                # Update progress based on pattern or duration
-                if progress_pattern and progress_pattern in line:
+                if duration and "time=" in line:
                     try:
-                        # Extract progress percentage
-                        progress = float(line.split(progress_pattern)[1].split('%')[0].strip())
-                        # Update progress bar
-                        pbar.update(progress - last_progress)
-                        last_progress = progress
-                    except (ValueError, IndexError):
+                        time_str = re.search(r'time=(\d{2}:\d{2}:\d{2}.\d{2})', line)
+                        if time_str:
+                            h, m, s = map(float, time_str.group(1).split(':'))
+                            current_time = h * 3600 + m * 60 + s
+                            progress = min(100, (current_time / duration) * 100)
+                            pbar.update(progress - last_progress)
+                            last_progress = progress
+                    except (ValueError, AttributeError):
                         continue
-                elif duration:
-                    # TODO: Implement duration-based progress for ffmpeg
-                    pass
                     
             pbar.close()
-            
-            # Wait for process to complete
             await process.wait()
             return process
             
