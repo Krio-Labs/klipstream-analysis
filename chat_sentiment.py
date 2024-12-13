@@ -165,13 +165,6 @@ def analyze_chat_sentiment(video_id):
             logging.info(f"Analysis completed. Total messages processed: {len(all_final_df)}")
             logging.info(f"Results saved to {output_file}")
             
-            # Delete the input file
-            try:
-                os.remove(input_file)
-                logging.info(f"Deleted input file: {input_file}")
-            except Exception as e:
-                logging.warning(f"Could not delete input file {input_file}: {str(e)}")
-            
             return output_file
         else:
             logging.error("No results were generated from the analysis")
