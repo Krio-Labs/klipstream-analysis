@@ -170,7 +170,6 @@ TwitchDownloaderCLI_mac
 TwitchDownloaderCLI.exe
 ffmpeg
 ffmpeg_mac
-ffmpeg.exe
 
 # Log files
 *.log

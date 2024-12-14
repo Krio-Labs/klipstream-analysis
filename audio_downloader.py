@@ -22,6 +22,11 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 class TwitchVideoDownloader:
     def __init__(self):
         self._setup_logging()
+        
+        # Add this check before setup_cli_path
+        if platform.system() == "Darwin":  # macOS
+            self._setup_macos_environment()
+        
         self._setup_cli_path()
         self._verify_ffmpeg_exists()
 
@@ -39,17 +44,49 @@ class TwitchVideoDownloader:
 
     def _setup_cli_path(self):
         """Setup CLI path based on platform"""
+        # Add debug logging
+        logging.info(f"Current working directory: {os.getcwd()}")
+        logging.info(f"Directory contents: {os.listdir(os.getcwd())}")
+        
         system = platform.system()
         logging.info(f"Detected operating system: {system}")
         
+        # Set CLI path based on platform
         if system == "Darwin":  # macOS
-            self._setup_macos_environment()
+            self.cli_path = "./TwitchDownloaderCLI_mac"
+            self.ffmpeg_path = "./ffmpeg_mac"
         elif system == "Windows":
             self.cli_path = "./TwitchDownloaderCLI.exe"
-        else:  # Linux
+            self.ffmpeg_path = "./ffmpeg.exe"
+        else:  # Linux (Cloud Functions uses Linux)
             self.cli_path = "./TwitchDownloaderCLI"
+            self.ffmpeg_path = "./ffmpeg"
         
-        self._verify_cli_exists()
+        # Check and set permissions for TwitchDownloaderCLI
+        if os.path.exists(self.cli_path):
+            try:
+                current_permissions = os.stat(self.cli_path).st_mode
+                os.chmod(self.cli_path, current_permissions | 0o111)
+                logging.info(f"Set executable permissions for {self.cli_path}")
+            except Exception as e:
+                logging.error(f"Failed to set permissions for TwitchDownloaderCLI: {e}")
+                raise
+        else:
+            logging.error(f"TwitchDownloaderCLI not found at {self.cli_path}")
+            raise FileNotFoundError("TwitchDownloaderCLI not found")
+        
+        # Check and set permissions for ffmpeg
+        if os.path.exists(self.ffmpeg_path):
+            try:
+                current_permissions = os.stat(self.ffmpeg_path).st_mode
+                os.chmod(self.ffmpeg_path, current_permissions | 0o111)
+                logging.info(f"Set executable permissions for {self.ffmpeg_path}")
+            except Exception as e:
+                logging.error(f"Failed to set permissions for ffmpeg: {e}")
+                raise
+        else:
+            logging.error(f"ffmpeg not found at {self.ffmpeg_path}")
+            raise FileNotFoundError("ffmpeg not found")
 
     def _setup_macos_environment(self):
         """Setup specific environment for macOS"""
@@ -88,23 +125,44 @@ class TwitchVideoDownloader:
 
     async def _download_video(self, video_id, output_file, temp_path):
         """Download video using TwitchDownloaderCLI"""
-        download_threads = self._get_optimal_thread_count(is_download=True)
-        command = [
-            self.cli_path,
-            "videodownload",
-            "--id", video_id,
-            "-o", output_file,
-            "--quality", "worst",
-            "--threads", str(download_threads),
-            "--temp-path", temp_path
-        ]
-        
-        process = await self._run_process_with_progress(
-            command, 
-            "Download Progress", 
-            progress_pattern="Progress:"
-        )
-        return process.returncode == 0
+        try:
+            download_threads = self._get_optimal_thread_count(is_download=True)
+            command = [
+                self.cli_path,
+                "videodownload",
+                "--id", video_id,
+                "-o", output_file,
+                "--quality", "worst",
+                "--threads", str(download_threads),
+                "--temp-path", temp_path
+            ]
+            
+            # Log the full command
+            logging.info(f"Running download command: {' '.join(command)}")
+            
+            # Log directory contents and permissions
+            logging.info(f"Current directory contents: {os.listdir('.')}")
+            logging.info(f"CLI file exists: {os.path.exists(self.cli_path)}")
+            logging.info(f"CLI file permissions: {oct(os.stat(self.cli_path).st_mode)}")
+            
+            process = await self._run_process_with_progress(
+                command, 
+                "Download Progress", 
+                progress_pattern="Progress:"
+            )
+            
+            if process.returncode != 0:
+                logging.error(f"Download failed with return code: {process.returncode}")
+                # Log stderr output
+                stderr = await process.stderr.read()
+                logging.error(f"Error output: {stderr.decode()}")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logging.error(f"Exception during download: {str(e)}")
+            raise
 
     async def _convert_to_wav(self, input_file, output_file):
         """Convert video to WAV using optimized FFmpeg settings"""
@@ -216,12 +274,18 @@ class TwitchVideoDownloader:
             pbar = tqdm(desc=description, total=100, unit="%")
             last_progress = 0
             
+            # Capture both stdout and stderr
+            stdout_data = []
+            stderr_data = []
+            
             while True:
                 line = await process.stderr.readline()
                 if not line:
                     break
                     
                 line = line.decode('utf-8', errors='ignore').strip()
+                stderr_data.append(line)
+                logging.info(f"Process output: {line}")  # Log all output
                 
                 if duration and "time=" in line:
                     try:
@@ -237,6 +301,17 @@ class TwitchVideoDownloader:
                     
             pbar.close()
             await process.wait()
+            
+            # Log all captured output
+            if stdout_data:
+                logging.info("Process stdout:")
+                for line in stdout_data:
+                    logging.info(line)
+            if stderr_data:
+                logging.info("Process stderr:")
+                for line in stderr_data:
+                    logging.info(line)
+                
             return process
             
         except Exception as e:
