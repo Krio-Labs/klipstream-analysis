@@ -30,3 +30,9 @@ functions-framework==3.*
 
 # Environment variables
 python-dotenv
+
+# Google Cloud
+google-cloud-storage
+google-cloud-speech
+google-cloud-language
+requests
