@@ -181,9 +181,9 @@ if __name__ == "__main__":
     parser.add_argument('url', type=str, help='Twitch VOD URL to process')
     args = parser.parse_args()
     
-    # Run the pipeline
+    # Run the pipeline directly with process_video for local execution
     try:
-        asyncio.run(run_pipeline(args.url))
+        asyncio.run(process_video(args.url))  # Call process_video directly instead of run_pipeline
     except KeyboardInterrupt:
         logging.info("Process interrupted by user")
     except Exception as e:

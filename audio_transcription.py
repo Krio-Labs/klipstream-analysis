@@ -4,6 +4,7 @@ import assemblyai as aai
 import aiohttp
 import csv
 from dotenv import load_dotenv
+import asyncio
 
 class TranscriptionHandler:
     def __init__(self):
@@ -35,7 +36,7 @@ class TranscriptionHandler:
         aai.settings.api_key = api_key
         logging.info("AssemblyAI API configured")
 
-    async def process_audio_files(self, video_id, input_dir="outputs"):
+    async def process_audio_files(self, video_id, input_dir="outputs", max_retries=3, timeout=300):
         """Process audio files in the specified directory for a specific video ID"""
         try:
             # Look for specific audio file with video ID
@@ -47,7 +48,7 @@ class TranscriptionHandler:
 
             logging.info(f"Processing {audio_file}...")
             
-            # Configure AssemblyAI
+            # Configure AssemblyAI with timeout settings
             aai.settings.api_key = os.getenv('ASSEMBLYAI_API_KEY')
             
             # Transcribe the audio file
