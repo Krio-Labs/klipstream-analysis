@@ -51,5 +51,5 @@ To deploy the function, you need to download the binaries and un-ignore them in 
 After that, you can deploy the function using the following command:
 
 ```bash
-gcloud functions deploy krio_media_functions --gen2 --runtime python311 --region us-east1 --source . --trigger-http --allow-unauthenticated --entry-point import_twitch_video --timeout 3600s --memory 2GB
+gcloud functions deploy Chat-Audio-Analytics --gen2 --runtime python312 --region us-central1 --source . --trigger-http --allow-unauthenticated --entry-point run_pipeline --timeout 3600s --memory 2GB
 ```

@@ -25,9 +25,38 @@ def cleanup():
 
 atexit.register(cleanup)
 
-async def run_pipeline(url: str):
+def run_pipeline(request):
     """
-    Run the complete audio analysis pipeline
+    Cloud Function entry point
+    """
+    try:
+        # Parse the request JSON
+        request_json = request.get_json()
+        if not request_json or 'url' not in request_json:
+            return 'No url provided', 400
+            
+        url = request_json['url']
+        
+        # Create outputs directory if it doesn't exist
+        output_dir = Path("/tmp/outputs")  # Use /tmp for Cloud Functions
+        output_dir.mkdir(exist_ok=True)
+        
+        # Create data directory for chat files
+        data_dir = Path("/tmp/data")  # Use /tmp for Cloud Functions
+        data_dir.mkdir(exist_ok=True)
+        
+        # Run the async pipeline using asyncio
+        result = asyncio.run(process_video(url))
+        
+        return {"status": "success", "result": result}
+        
+    except Exception as e:
+        logging.error(f"Error processing request: {str(e)}")
+        return {"error": str(e)}, 500
+
+async def process_video(url: str):
+    """
+    Contains the original run_pipeline logic
     """
     try:
         # Create outputs directory if it doesn't exist
