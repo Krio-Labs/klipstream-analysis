@@ -5,6 +5,7 @@ import json
 import warnings
 import multiprocessing
 import atexit
+import os
 
 from audio_downloader import TwitchVideoDownloader
 from audio_transcription import TranscriptionHandler
@@ -160,6 +161,38 @@ async def process_video(url: str):
     except Exception as e:
         logging.error(f"Pipeline failed: {str(e)}")
         raise
+
+def list_files(event, context):
+    # Get the current working directory
+    current_dir = os.getcwd()
+    
+    # List all files and directories
+    files = []
+    for root, dirs, filenames in os.walk(current_dir):
+        # Add directories
+        for dir_name in dirs:
+            files.append(os.path.join(root, dir_name))
+        # Add files
+        for filename in filenames:
+            files.append(os.path.join(root, filename))
+    
+    # Print or return the files
+    print("Files in function:")
+    for file in files:
+        print(file)
+        
+    return {"files": files}
+
+def list_tmp_files(event, context):
+    tmp_dir = '/tmp'
+    files = []
+    for root, dirs, filenames in os.walk(tmp_dir):
+        for dir_name in dirs:
+            files.append(os.path.join(root, dir_name))
+        for filename in filenames:
+            files.append(os.path.join(root, filename))
+    
+    return {"tmp_files": files}
 
 if __name__ == "__main__":
     # Filter resource tracker warnings

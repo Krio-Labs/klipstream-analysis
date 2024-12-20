@@ -1,13 +1,8 @@
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
-from scipy.signal import find_peaks
-from scipy.interpolate import make_interp_spline
-import matplotlib.dates as mdates
 import logging
-import shutil
 
 def plot_metrics(stats, output_dir, window=5):
     """
@@ -205,7 +200,7 @@ def analyze_chat_intervals(video_id, output_dir):
         for _, para in paragraphs.iterrows():
             start_time = para['start_time']
             # Add 15 second buffer after paragraph end since chat reactions can be delayed
-            end_time = para['end_time'] + 15
+            end_time = para['end_time'] + 8
             
             # Get messages in this time window
             mask = (df['time'] >= start_time) & (df['time'] <= end_time)
@@ -255,9 +250,6 @@ def analyze_chat_intervals(video_id, output_dir):
         
         # Save to CSV with video_id in filename
         interval_stats.to_csv(os.path.join(output_dir, f'{video_id}_chat_analysis.csv'), index=False)
-        
-        # Delete the input file after analysis
-        os.remove(input_file)
         
         return interval_stats
         
@@ -363,8 +355,10 @@ def analyze_chat_highlights(video_id, output_dir):
         # Save to CSV with video_id in filename
         highlight_interval_stats.to_csv(os.path.join(output_dir, f'{video_id}_highlight_analysis.csv'), index=False)
 
-        # Delete the input file after analysis
-        os.remove(input_file)
+        # Move file deletion here - after both analyses are complete
+        if os.path.exists(input_file):
+            os.remove(input_file)
+            logging.info(f"Cleaned up: Deleted {input_file}")
 
         return highlight_interval_stats
         
@@ -392,35 +386,29 @@ def main():
     try:
         # Analyze chat intervals
         interval_stats = analyze_chat_intervals(video_id, output_dir)
+        if interval_stats is not None:
+            # Plot metrics
+            plot_metrics(interval_stats, output_dir)
             
-        # Plot metrics
-        plot_metrics(interval_stats, output_dir)
-        
-        # Print summary statistics
-        total_messages = interval_stats['message_count'].sum()
-        stream_duration = interval_stats['end_time'].max() / 60  # Convert to minutes
-        messages_per_minute = total_messages / stream_duration
-        avg_messages_per_interval = interval_stats['message_count'].mean()
-        overall_sentiment = interval_stats['avg_sentiment'].mean()
-        
-        print("\nAnalysis Summary:")
-        print("-" * 50)
-        print(f"Video ID: {video_id}")
-        print(f"Total messages: {total_messages:.0f}")
-        print(f"Stream duration: {stream_duration:.1f} minutes")
-        print(f"Messages per minute: {messages_per_minute:.1f}")
-        print(f"Average messages per interval: {avg_messages_per_interval:.1f}")
-        print(f"Overall sentiment: {overall_sentiment:.3f}")
+            # Analyze highlights (do this before cleaning up files)
+            analyze_chat_highlights(video_id, output_dir)
             
-        # Analyze highlights
-        analyze_chat_highlights(video_id, output_dir)
-        
-        # Delete the data folder after analysis is complete
-        data_dir = 'data'
-        if os.path.exists(data_dir):
-            shutil.rmtree(data_dir)
-            print(f"\nCleaned up: Deleted {data_dir} directory")
-        
+            # Print summary statistics
+            total_messages = interval_stats['message_count'].sum()
+            stream_duration = interval_stats['end_time'].max() / 60  # Convert to minutes
+            messages_per_minute = total_messages / stream_duration
+            avg_messages_per_interval = interval_stats['message_count'].mean()
+            overall_sentiment = interval_stats['avg_sentiment'].mean()
+            
+            print("\nAnalysis Summary:")
+            print("-" * 50)
+            print(f"Video ID: {video_id}")
+            print(f"Total messages: {total_messages:.0f}")
+            print(f"Stream duration: {stream_duration:.1f} minutes")
+            print(f"Messages per minute: {messages_per_minute:.1f}")
+            print(f"Average messages per interval: {avg_messages_per_interval:.1f}")
+            print(f"Overall sentiment: {overall_sentiment:.3f}")
+    
     except Exception as e:
         print(f"Error during analysis: {e}")
         sys.exit(1)
