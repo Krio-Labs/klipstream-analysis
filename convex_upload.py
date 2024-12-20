@@ -1,11 +1,11 @@
-from typing import Optional, TypedDict, Literal
+from typing import Optional, TypedDict, Union, List, Tuple
 import aiohttp
 import json
 import os
 import asyncio
-from typing import List
 import argparse
 import logging
+
 
 # Set up logging
 logging.basicConfig(
@@ -18,35 +18,17 @@ class SavedFileData(TypedDict):
     storageId: str
     url: str
 
+class FileObject(TypedDict):
+    name: str
+    storageId: str
+    url: str
+
 class UpdateVideo(TypedDict, total=False):  
-    id: str  # type: ignore  
+    id: str
     status: str
-    chatId: str
-    chatUrl: str
-    transcriptId: str
-    transcriptUrl: str
-    audiowaveId: str
-    audiowaveUrl: str
-    chatAnalysisId: str
-    chatAnalysisUrl: str
-    transcriptAnalysisId: str
-    transcriptAnalysisUrl: str
-    transcriptWordId: str
-    transcriptWordUrl: str
-
-FileType = Literal['audiowave', 'transcript', 'chat', 'chatAnalysis', 'transcriptAnalysis', 'transcriptWord']
-
-type_to_fields = {
-    'audiowave': ('audiowaveId', 'audiowaveUrl'),
-    'transcript': ('transcriptId', 'transcriptUrl'),
-    'chat': ('chatId', 'chatUrl'),
-    'chatAnalysis': ('chatAnalysisId', 'chatAnalysisUrl'),
-    'transcriptAnalysis': ('transcriptAnalysisId', 'transcriptAnalysisUrl'),
-    'transcriptWord': ('transcriptWordId', 'transcriptWordUrl')
-}
+    files: List[FileObject]
 
 async def upload_file_to_convex(contents: str) -> SavedFileData:
-    """Renamed from upload_file to avoid naming conflict"""
     logger.debug("Attempting to upload file to Convex")
     async with aiohttp.ClientSession() as session:
         try:
@@ -78,45 +60,33 @@ async def update_video(contents: UpdateVideo) -> bool:
                 },
                 data=json.dumps(contents)
             ) as response:
-                response_text = await response.text()
                 if not response.ok:
                     logger.error(f"Update video failed with status {response.status}")
-                    logger.error(f"Response body: {response_text}")
-                    logger.error(f"Request data: {json.dumps(contents, indent=2)}")
-                    return False
-                logger.debug(f"Update successful. Response: {response_text}")
-                return True
+                return response.ok
         except Exception as e:
             logger.error(f"Error in update_video: {str(e)}")
             return False
 
-async def send_file(video_id: str, contents: str, file_type: FileType) -> bool:
-    logger.debug(f"Sending file of type {file_type} for video {video_id}")
-    if not video_id:
-        raise ValueError("video_id cannot be empty")
-    if not contents:
-        raise ValueError("contents cannot be empty")
-    if file_type not in type_to_fields:
-        raise ValueError(f"Invalid file_type: {file_type}")    
-    try:
-        upload_result = await upload_file_to_convex(contents)
-        logger.debug(f"Upload successful, got result: {upload_result}")
-        
-        update_data: UpdateVideo = {"id": video_id}    
-        id_field, url_field = type_to_fields[file_type]        
-        update_data[id_field] = upload_result['storageId']
-        update_data[url_field] = upload_result['url']        
-        
-        logger.debug(f"Preparing to update video with data: {json.dumps(update_data, indent=2)}")
-        success = await update_video(update_data)
-        if success:
-            logger.debug(f"Successfully updated video with {file_type}")
-        else:
-            logger.error(f"Failed to update video with {file_type}")
-        return success
-    except Exception as e:
-        logger.error(f"Error in send_file: {str(e)}", exc_info=True)
-        return False
+async def send_files(video_id: str, files: List[Tuple[str, str]]) -> bool:
+    success = True
+    for contents, filename in files:
+        logger.debug(f"Sending file {filename} for video {video_id}")
+        try:
+            upload_result = await upload_file_to_convex(contents)
+            logger.debug(f"Upload successful, got result: {upload_result}")
+            
+            update_data: UpdateVideo = {"id": video_id, "status": "uploaded", "files": [{"name": filename, "storageId": upload_result['storageId'], "url": upload_result['url']}]}
+            
+            logger.debug(f"Preparing to update video with data: {json.dumps(update_data, indent=2)}")
+            success = await update_video(update_data)
+            if success:
+                logger.debug(f"Successfully updated video with {filename}")
+            else:
+                logger.error(f"Failed to update video with {filename}")
+        except Exception as e:
+            logger.error(f"Error in send_files: {str(e)}", exc_info=True)
+            success = False
+    return success
 
 # Define the directories
 OUTPUTS_DIR = 'outputs'
@@ -137,7 +107,9 @@ async def get_file_type(filename: str, video_id: str) -> str | None:
     return None
 
 async def upload_files(video_id: str) -> None:
-    # Upload chat file from data directory
+    files_to_upload = []
+    
+    # Check chat file from data directory
     chat_filename = f"{video_id}_chat.csv"
     chat_path = os.path.join(DATA_DIR, chat_filename)
     
@@ -146,17 +118,11 @@ async def upload_files(video_id: str) -> None:
         try:
             with open(chat_path, 'r', encoding='utf-8') as file:
                 contents = file.read()
-                success = await send_file(video_id, contents, 'chat')
-                if success:
-                    logger.info(f"Successfully uploaded {chat_filename}")
-                else:
-                    logger.error(f"Failed to upload {chat_filename}")
+                files_to_upload.append((contents, chat_filename))
         except Exception as e:
             logger.error(f"Error reading {chat_path}: {str(e)}")
-    else:
-        logger.warning(f"Chat file not found at {chat_path}")
-
-    # Upload files from outputs directory
+    
+    # Check files from outputs directory
     logger.debug(f"Checking outputs directory: {OUTPUTS_DIR}")
     for filename in os.listdir(OUTPUTS_DIR):
         file_type = await get_file_type(filename, video_id)
@@ -166,13 +132,16 @@ async def upload_files(video_id: str) -> None:
             try:
                 with open(file_path, 'r', encoding='utf-8') as file:
                     contents = file.read()
-                    success = await send_file(video_id, contents, file_type)
-                    if success:
-                        logger.info(f"Successfully uploaded {filename}")
-                    else:
-                        logger.error(f"Failed to upload {filename}")
+                    files_to_upload.append((contents, filename))
             except Exception as e:
                 logger.error(f"Error processing {filename}: {str(e)}")
+    
+    if files_to_upload:
+        success = await send_files(video_id, files_to_upload)
+        if success:
+            logger.info(f"Successfully uploaded all files for video {video_id}")
+        else:
+            logger.error(f"Failed to upload files for video {video_id}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Upload video files to Convex')
