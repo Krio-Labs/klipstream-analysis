@@ -79,13 +79,27 @@ async def process_video(url: str):
             raise RuntimeError("Failed to download audio file")
         logging.info(f"Audio downloaded successfully: {audio_file}")
 
-        # Step 2: Transcribe audio
+        # Step 2: Transcribe audio with retry logic
         logging.info("Step 2: Transcribing audio...")
-        transcriber = TranscriptionHandler()
-        transcription_result = await transcriber.process_audio_files(video_id)
-        if not transcription_result:
-            raise RuntimeError("Transcription failed")
-        logging.info("Transcription completed")
+        max_retries = 3
+        retry_delay = 5  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                transcriber = TranscriptionHandler()
+                transcription_result = await transcriber.process_audio_files(video_id)
+                if transcription_result:
+                    logging.info("Transcription completed successfully")
+                    break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logging.warning(f"Transcription attempt {attempt + 1} failed: {str(e)}")
+                    logging.info(f"Retrying in {retry_delay} seconds...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    logging.error("All transcription attempts failed")
+                    raise RuntimeError("Transcription failed after all retry attempts") from e
 
         # Step 3: Sentiment analysis
         logging.info("Step 3: Performing sentiment analysis...")
