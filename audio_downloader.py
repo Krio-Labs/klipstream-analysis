@@ -9,34 +9,37 @@ import shutil
 from pathlib import Path
 import psutil
 
-# Define global paths
-DOWNLOADS_DIR = Path("downloads")
+# Define global paths - use /tmp for Cloud Functions
+DOWNLOADS_DIR = Path("/tmp/downloads")
 TEMP_DIR = DOWNLOADS_DIR / "temp"
-OUTPUT_DIR = Path("outputs")
+OUTPUT_DIR = Path("/tmp/outputs")
 
 # Create necessary directories
-DOWNLOADS_DIR.mkdir(exist_ok=True)
-TEMP_DIR.mkdir(exist_ok=True)
-OUTPUT_DIR.mkdir(exist_ok=True)
+DOWNLOADS_DIR.mkdir(exist_ok=True, parents=True)
+TEMP_DIR.mkdir(exist_ok=True, parents=True)
+OUTPUT_DIR.mkdir(exist_ok=True, parents=True)
 
 class TwitchVideoDownloader:
     def __init__(self):
         self._setup_logging()
-        
+
         # Add this check before setup_cli_path
         if platform.system() == "Darwin":  # macOS
             self._setup_macos_environment()
-        
+
         self._setup_cli_path()
         self._verify_ffmpeg_exists()
 
     def _setup_logging(self):
         """Configure logging with timestamp, level, and message"""
+        # Use /tmp for log files in cloud environment
+        log_file = '/tmp/twitch_downloader.log'
+
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler('twitch_downloader.log'),
+                logging.FileHandler(log_file),
                 logging.StreamHandler()
             ]
         )
@@ -47,10 +50,10 @@ class TwitchVideoDownloader:
         # Add debug logging
         logging.info(f"Current working directory: {os.getcwd()}")
         logging.info(f"Directory contents: {os.listdir(os.getcwd())}")
-        
+
         system = platform.system()
         logging.info(f"Detected operating system: {system}")
-        
+
         # Set CLI path based on platform
         if system == "Darwin":  # macOS
             self.cli_path = "./TwitchDownloaderCLI_mac"
@@ -59,9 +62,14 @@ class TwitchVideoDownloader:
             self.cli_path = "./TwitchDownloaderCLI.exe"
             self.ffmpeg_path = "./ffmpeg.exe"
         else:  # Linux (Cloud Functions uses Linux)
-            self.cli_path = "./TwitchDownloaderCLI"
-            self.ffmpeg_path = "./ffmpeg"
-        
+            # Check if we're in a container environment (like Cloud Functions)
+            if os.path.exists("/app/bin/TwitchDownloaderCLI"):
+                self.cli_path = "/app/bin/TwitchDownloaderCLI"
+                self.ffmpeg_path = "/usr/bin/ffmpeg"
+            else:
+                self.cli_path = "./TwitchDownloaderCLI"
+                self.ffmpeg_path = "./ffmpeg"
+
         # Check and set permissions for TwitchDownloaderCLI
         if os.path.exists(self.cli_path):
             try:
@@ -74,7 +82,7 @@ class TwitchVideoDownloader:
         else:
             logging.error(f"TwitchDownloaderCLI not found at {self.cli_path}")
             raise FileNotFoundError("TwitchDownloaderCLI not found")
-        
+
         # Check and set permissions for ffmpeg
         if os.path.exists(self.ffmpeg_path):
             try:
@@ -136,30 +144,30 @@ class TwitchVideoDownloader:
                 "--threads", str(download_threads),
                 "--temp-path", temp_path
             ]
-            
+
             # Log the full command
             logging.info(f"Running download command: {' '.join(command)}")
-            
+
             # Log directory contents and permissions
             logging.info(f"Current directory contents: {os.listdir('.')}")
             logging.info(f"CLI file exists: {os.path.exists(self.cli_path)}")
             logging.info(f"CLI file permissions: {oct(os.stat(self.cli_path).st_mode)}")
-            
+
             process = await self._run_process_with_progress(
-                command, 
-                "Download Progress", 
+                command,
+                "Download Progress",
                 progress_pattern="Progress:"
             )
-            
+
             if process.returncode != 0:
                 logging.error(f"Download failed with return code: {process.returncode}")
                 # Log stderr output
                 stderr = await process.stderr.read()
                 logging.error(f"Error output: {stderr.decode()}")
                 return False
-            
+
             return True
-            
+
         except Exception as e:
             logging.error(f"Exception during download: {str(e)}")
             raise
@@ -169,7 +177,7 @@ class TwitchVideoDownloader:
         try:
             cpu_cores = max(1, psutil.cpu_count(logical=False) - 2)
             command = [
-                'ffmpeg',
+                self.ffmpeg_path,  # Use the platform-specific ffmpeg path
                 '-i', input_file,
                 '-vn',
                 '-acodec', 'pcm_s16le',
@@ -179,7 +187,7 @@ class TwitchVideoDownloader:
                 '-y',
                 output_file
             ]
-            
+
             process = await self._run_process_with_progress(
                 command,
                 "Converting to WAV",
@@ -203,23 +211,23 @@ class TwitchVideoDownloader:
             video_id = self.extract_video_id(url)
             video_file = OUTPUT_DIR / "video.mp4"
             audio_file = OUTPUT_DIR / f"audio_{video_id}.wav"
-            
+
             # Clean existing files
             self._clean_existing_files([video_file, audio_file])
-            
+
             # Process video
             if not await self._download_video(video_id, str(video_file), str(TEMP_DIR)):
                 raise Exception("Video download failed")
-                
+
             if not await self._convert_to_wav(str(video_file), str(audio_file)):
                 raise Exception("Audio conversion failed")
-                
+
             # Cleanup all temporary files and folders
             self._cleanup_files(TEMP_DIR, video_file)
             self._cleanup_downloads_folder()
-            
+
             return audio_file
-            
+
         except Exception as e:
             logging.error(f"Process failed: {str(e)}")
             self._cleanup_files(TEMP_DIR, video_file)
@@ -238,6 +246,38 @@ class TwitchVideoDownloader:
         else:
             logging.error(f"Could not extract video ID from URL: {url}")
             raise ValueError(f"Invalid Twitch video URL format: {url}")
+
+    def get_video_metadata(self, video_id):
+        """Get metadata for a Twitch video from the download process"""
+        try:
+            # Since videoinfo command is not available, we'll extract metadata from the video download
+            # Just return a basic metadata object with the video ID
+            logging.info(f"Creating basic metadata for ID: {video_id}")
+
+            metadata = {
+                "id": video_id,
+                "title": f"Twitch Video {video_id}",
+                "user_name": "Unknown",
+                "published_at": "",
+                "duration": 0,
+                "view_count": 0,
+                "thumbnail_url": f"https://static-cdn.jtvnw.net/cf_vods/d2nvs31859zcd8/twitchcdn/{video_id}/thumb/thumb0.jpg"
+            }
+
+            logging.info(f"Created basic metadata for video {video_id}")
+            return metadata
+
+        except Exception as e:
+            logging.error(f"Error getting video metadata: {str(e)}")
+            return {
+                "id": video_id,
+                "title": f"Twitch Video {video_id}",
+                "user_name": "Unknown",
+                "published_at": "",
+                "duration": 0,
+                "view_count": 0,
+                "thumbnail_url": ""
+            }
 
     def _cleanup_files(self, temp_path, video_file):
         """Clean up temporary files and directories"""
@@ -263,30 +303,30 @@ class TwitchVideoDownloader:
     async def _run_process_with_progress(self, command, description, progress_pattern=None, duration=None):
         """Run a process with progress bar tracking"""
         logging.info(f"Running command: {' '.join(command)}")
-        
+
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            
+
             pbar = tqdm(desc=description, total=100, unit="%")
             last_progress = 0
-            
+
             # Capture both stdout and stderr
             stdout_data = []
             stderr_data = []
-            
+
             while True:
                 line = await process.stderr.readline()
                 if not line:
                     break
-                    
+
                 line = line.decode('utf-8', errors='ignore').strip()
                 stderr_data.append(line)
                 logging.info(f"Process output: {line}")  # Log all output
-                
+
                 if duration and "time=" in line:
                     try:
                         time_str = re.search(r'time=(\d{2}:\d{2}:\d{2}.\d{2})', line)
@@ -298,10 +338,10 @@ class TwitchVideoDownloader:
                             last_progress = progress
                     except (ValueError, AttributeError):
                         continue
-                    
+
             pbar.close()
             await process.wait()
-            
+
             # Log all captured output
             if stdout_data:
                 logging.info("Process stdout:")
@@ -311,9 +351,9 @@ class TwitchVideoDownloader:
                 logging.info("Process stderr:")
                 for line in stderr_data:
                     logging.info(line)
-                
+
             return process
-            
+
         except Exception as e:
             logging.error(f"Process execution failed: {str(e)}")
             raise
@@ -321,43 +361,70 @@ class TwitchVideoDownloader:
     def _get_video_duration(self, input_file):
         """Get video duration in seconds using ffprobe"""
         try:
-            cmd = [
-                'ffprobe', 
-                '-v', 'error',
-                '-show_entries', 'format=duration',
-                '-of', 'default=noprint_wrappers=1:nokey=1',
-                input_file
-            ]
-            
+            # Try to use system ffprobe on macOS
+            if platform.system() == "Darwin":
+                cmd = [
+                    'ffprobe',
+                    '-v', 'error',
+                    '-show_entries', 'format=duration',
+                    '-of', 'default=noprint_wrappers=1:nokey=1',
+                    input_file
+                ]
+            else:
+                # Use ffprobe from the same directory as ffmpeg
+                ffprobe_path = self.ffmpeg_path.replace('ffmpeg', 'ffprobe')
+                cmd = [
+                    ffprobe_path,
+                    '-v', 'error',
+                    '-show_entries', 'format=duration',
+                    '-of', 'default=noprint_wrappers=1:nokey=1',
+                    input_file
+                ]
+
             # Run ffprobe command
             result = subprocess.run(cmd, capture_output=True, text=True)
             duration = float(result.stdout.strip())
             logging.info(f"Video duration: {duration} seconds")
             return duration
-            
-        except (subprocess.SubprocessError, ValueError) as e:
+
+        except (subprocess.SubprocessError, ValueError, FileNotFoundError) as e:
             logging.error(f"Error getting video duration: {str(e)}")
             # Return a default duration if unable to get actual duration
-            return 0
+            logging.warning("Using default duration of 3600 seconds (1 hour)")
+            return 3600  # Default to 1 hour
 
     def _verify_ffmpeg_exists(self):
-        """Verify ffmpeg and ffprobe are installed"""
+        """Verify ffmpeg is installed"""
         try:
-            subprocess.run(['ffmpeg', '-version'], capture_output=True)
-            subprocess.run(['ffprobe', '-version'], capture_output=True)
-            logging.info("ffmpeg and ffprobe found")
+            # Just check if ffmpeg exists, don't worry about ffprobe
+            subprocess.run([self.ffmpeg_path, '-version'], capture_output=True)
+            logging.info("ffmpeg found")
+
+            # Try to find ffprobe but don't fail if not found
+            try:
+                # On macOS, we'll use the system ffprobe
+                if platform.system() == "Darwin":
+                    subprocess.run(['ffprobe', '-version'], capture_output=True)
+                    logging.info("System ffprobe found")
+                else:
+                    ffprobe_path = self.ffmpeg_path.replace('ffmpeg', 'ffprobe')
+                    subprocess.run([ffprobe_path, '-version'], capture_output=True)
+                    logging.info("ffprobe found")
+            except FileNotFoundError:
+                logging.warning("ffprobe not found, some functionality may be limited")
+
         except FileNotFoundError:
-            logging.error("ffmpeg or ffprobe not found. Please install ffmpeg.")
-            raise FileNotFoundError("ffmpeg or ffprobe not found. Please install ffmpeg.")
+            logging.error("ffmpeg not found. Please install ffmpeg.")
+            raise FileNotFoundError("ffmpeg not found. Please install ffmpeg.")
 
 async def main():
     logging.info("Starting TwitchVideoDownloader application")
     downloader = TwitchVideoDownloader()
-    
+
     # Get URL from user
     url = input("Enter Twitch video URL: ")
     logging.info(f"User provided URL: {url}")
-    
+
     try:
         # Note the await here
         result = await downloader.process_video(url)

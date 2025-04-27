@@ -14,11 +14,14 @@ class TranscriptionHandler:
 
     def _setup_logging(self):
         """Configure logging with timestamp, level, and message"""
+        # Use /tmp for log files in cloud environment
+        log_file = '/tmp/transcription.log'
+
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler('transcription.log'),
+                logging.FileHandler(log_file),
                 logging.StreamHandler()
             ]
         )
@@ -27,33 +30,33 @@ class TranscriptionHandler:
         """Setup AssemblyAI with API key"""
         # Load environment variables
         load_dotenv()
-        
+
         # Get API key from environment
         api_key = os.getenv('ASSEMBLYAI_API_KEY')
         if not api_key:
             raise ValueError("ASSEMBLYAI_API_KEY environment variable must be set")
-            
+
         aai.settings.api_key = api_key
         logging.info("AssemblyAI API configured")
 
-    async def process_audio_files(self, video_id, input_dir="outputs", max_retries=3, timeout=300):
+    async def process_audio_files(self, video_id, input_dir="/tmp/outputs", max_retries=3, timeout=300):
         """Process audio files in the specified directory for a specific video ID"""
         try:
             # Look for specific audio file with video ID
             audio_file = os.path.join(input_dir, f"audio_{video_id}.wav")
-            
+
             if not os.path.exists(audio_file):
                 logging.error(f"Audio file not found: {audio_file}")
                 return None
 
             logging.info(f"Processing {audio_file}...")
-            
+
             # Configure AssemblyAI with timeout settings
             aai.settings.api_key = os.getenv('ASSEMBLYAI_API_KEY')
-            
+
             # Transcribe the audio file
             transcript = aai.Transcriber().transcribe(audio_file)
-            
+
             # Save word-level timestamps
             words_file = os.path.join(input_dir, f"audio_{video_id}_words.csv")
             with open(words_file, 'w', newline='', encoding='utf-8') as f:
@@ -72,13 +75,13 @@ class TranscriptionHandler:
             paragraphs_file = os.path.join(input_dir, f"audio_{video_id}_paragraphs.csv")
             headers = {'authorization': os.getenv('ASSEMBLYAI_API_KEY')}
             paragraphs_endpoint = f"https://api.assemblyai.com/v2/transcript/{transcript.id}/paragraphs"
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(paragraphs_endpoint, headers=headers) as response:
                     if response.status == 200:
                         data = await response.json()
                         paragraphs = data['paragraphs']
-                        
+
                         # Save paragraphs to CSV
                         with open(paragraphs_file, 'w', newline='', encoding='utf-8') as f:
                             writer = csv.writer(f)
@@ -103,7 +106,7 @@ class TranscriptionHandler:
     async def _transcribe_audio(self, audio_file, base_name, input_dir):
         """Transcribe audio using AssemblyAI"""
         logging.info(f"Starting transcription for {base_name}")
-        
+
         try:
             # Configure transcription
             transcriber = aai.Transcriber()
@@ -111,7 +114,7 @@ class TranscriptionHandler:
                 speech_model="nano",
                 language_detection=True
             )
-            
+
             # Get transcript
             transcript = transcriber.transcribe(audio_file, config=config)
             if transcript.error:
@@ -120,7 +123,7 @@ class TranscriptionHandler:
             # Save transcript ID for reference
             transcript_id = transcript.id
             logging.info(f"Transcript ID: {transcript_id}")
-            
+
             # Save word-level timestamps
             words_file = os.path.join(input_dir, f"{base_name}_words.csv")
             with open(words_file, 'w', newline='', encoding='utf-8') as f:
@@ -142,7 +145,7 @@ class TranscriptionHandler:
             # Save paragraphs to CSV
             paragraphs_endpoint = f"{base_url}/{transcript_id}/paragraphs"
             paragraphs_file = os.path.join(input_dir, f"{base_name}_paragraphs.csv")
-            
+
             response = requests.get(paragraphs_endpoint, headers=headers)
             if response.status_code == 200:
                 paragraphs = response.json()['paragraphs']
@@ -166,12 +169,12 @@ class TranscriptionHandler:
 if __name__ == "__main__":
     import asyncio
     import argparse
-    
+
     # Set up argument parser
     parser = argparse.ArgumentParser(description='Process audio transcription')
     parser.add_argument('--video-id', type=str, required=True, help='Video ID to process')
     args = parser.parse_args()
-    
+
     async def main():
         handler = TranscriptionHandler()
         await handler.process_audio_files(args.video_id)  # Pass the video_id here
