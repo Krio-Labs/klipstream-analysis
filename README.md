@@ -1,55 +1,100 @@
-# Twitch Video Downloader with Audio Level Analysis
+# Twitch Analysis Cloud Run Service
 
-This Google Cloud Function downloads the lowest-quality rendition of a Twitch video using the **TwitchDownloaderCLI**, extracts the audio using **FFmpeg**, and uploads the audio file to Ci.
+This Google Cloud Run service analyzes Twitch VODs and uploads the results to Convex. It's designed to work with the KlipStream frontend project.
 
 ## Features
 
-- Downloads the lowest quality (160p) Twitch video.
-- Extracts audio from the video using FFmpeg.
-- Uploads the audio file to Ci.
+- Downloads Twitch VODs using TwitchDownloaderCLI
+- Extracts audio and converts it to WAV format
+- Transcribes the audio using AssemblyAI
+- Performs sentiment analysis on the transcription
+- Analyzes chat data and sentiment
+- Identifies highlights and emotional patterns
+- Uploads all results to Convex storage
+
+## Integration with Frontend
+
+This service is designed to work with the KlipStream frontend project. The workflow is:
+
+1. The frontend creates a video entry in the Convex database when a user submits a Twitch VOD URL
+2. The frontend then calls this Cloud Run service with the Twitch VOD URL
+3. This service processes the video and updates the existing Convex record with analysis results using the `convex_upload.py` module
 
 ## Requirements
 
-- Google Cloud Project with Cloud Functions enabled.
-- Google Cloud SDK installed locally.
-- Proper IAM permissions (to deploy and access Cloud Functions).
-- TwitchDownloaderCLI and FFmpeg binaries are included in the function.
+- Google Cloud Project with Cloud Run enabled
+- Docker installed locally
+- Google Cloud SDK installed locally
+- AssemblyAI API key
+- Google API key (for sentiment analysis)
+- Convex account and project
 
 ## Setup
 
-### 1. Prerequisites
+### 1. Configure Environment Variables
 
-Ensure the following tools are installed and configured locally:
+Update the `.env.yaml` file with your API keys:
 
-- [Google Cloud SDK](https://cloud.google.com/sdk/docs/install)
-- [Python 3.11](https://www.python.org/downloads/)
-- [TwitchDownloaderCLI](https://github.com/lay295/TwitchDownloader) (included in the function)
-- [FFmpeg](https://ffmpeg.org/) (included in the function)
-
-### 2. Project Structure
-
-twitch-video-downloader/
-│
-├── ffmpeg                     # FFmpeg binary
-├── TwitchDownloaderCLI        # TwitchDownloaderCLI binary
-├── main.py                    # Python Cloud Function code
-├── requirements.txt           # Empty or with additional dependencies (if needed)
-
-### 3. Deploy the Cloud Function
-
-For the function to work, it needs to upload the required binaries which are ignored in the .gitignore file. 
-
-To deploy the function, you need to download the binaries and un-ignore them in the .gitignore file.
-
-```gitignore
-# TwitchDownloaderCLI
-# TwitchDownloaderCLI.exe
-# ffmpeg
-# ffmpeg.exe
+```yaml
+ASSEMBLYAI_API_KEY: "your_assemblyai_api_key_here"
+GOOGLE_API_KEY: "your_google_api_key_here"
+CONVEX_UPLOAD_URL: "your_convex_upload_endpoint_here"
 ```
 
-After that, you can deploy the function using the following command:
+### 2. Update the Existing Cloud Run Service
+
+Run the update script to update the existing "Chat-Audio-Analytics" service:
 
 ```bash
-gcloud functions deploy Chat-Audio-Analytics --gen2 --runtime python312 --region us-central1 --source . --trigger-http --allow-unauthenticated --entry-point run_pipeline --timeout 3600s --memory 2GB
+./update_cloud_run.sh
+```
+
+For more detailed instructions, see [DEPLOYMENT.md](DEPLOYMENT.md).
+
+### 3. Manual Deployment (Alternative)
+
+If you prefer to deploy manually:
+
+```bash
+# Build the Docker image
+docker build -t gcr.io/optimum-habitat-429714-a7/Chat-Audio-Analytics .
+
+# Push the image to Google Container Registry
+docker push gcr.io/optimum-habitat-429714-a7/Chat-Audio-Analytics
+
+# Update the Cloud Run service
+gcloud run deploy Chat-Audio-Analytics \
+    --image gcr.io/optimum-habitat-429714-a7/Chat-Audio-Analytics \
+    --platform managed \
+    --region us-central1 \
+    --project optimum-habitat-429714-a7 \
+    --env-vars-file .env.yaml \
+    --allow-unauthenticated
+```
+
+## Usage
+
+Send a POST request to the Cloud Run service URL:
+
+```json
+{
+  "url": "https://www.twitch.tv/videos/YOUR_VIDEO_ID"
+}
+```
+
+**Important**: The Twitch video must already exist in your Convex database before calling this service.
+
+## Testing
+
+To test locally:
+
+```bash
+# Install the Functions Framework
+pip install functions-framework
+
+# Run the function locally
+functions-framework --target=run_pipeline --debug
+
+# In another terminal, use the test script
+python test_cloud_function.py
 ```

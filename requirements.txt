@@ -3,7 +3,7 @@ pydub
 librosa
 soundfile
 
-# Data processing and visualization 
+# Data processing and visualization
 numpy
 pandas
 matplotlib
@@ -13,7 +13,6 @@ tqdm
 
 # Machine learning and AI
 transformers
-torch
 google-generativeai
 assemblyai
 
@@ -24,6 +23,7 @@ psutil
 httpx
 aiohttp
 aiofiles
+requests
 
 # Cloud Functions
 functions-framework==3.*
@@ -35,4 +35,6 @@ python-dotenv
 google-cloud-storage
 google-cloud-speech
 google-cloud-language
-requests
+
+# Exclude torch to reduce package size - not needed for cloud function
+# torch

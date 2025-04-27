@@ -23,7 +23,7 @@ class FileObject(TypedDict):
     storageId: str
     url: str
 
-class UpdateVideo(TypedDict, total=False):  
+class UpdateVideo(TypedDict, total=False):
     id: str
     status: str
     files: List[FileObject]
@@ -33,7 +33,7 @@ async def upload_file_to_convex(contents: str) -> SavedFileData:
     async with aiohttp.ClientSession() as session:
         try:
             async with session.post(
-                "https://curious-lark-519.convex.site/upload-file",
+                "https://laudable-horse-446.convex.site/upload-file",
                 headers={
                     "Authorization": "Basic e1a36cfcdf58e3282d4aee7a22adebbe0d2c349f",
                     "Content-Type": "text/plain",
@@ -53,7 +53,7 @@ async def update_video(contents: UpdateVideo) -> bool:
     async with aiohttp.ClientSession() as session:
         try:
             async with session.post(
-                "https://curious-lark-519.convex.site/update-video",
+                "https://laudable-horse-446.convex.site/update-video",
                 headers={
                     "Authorization": "Basic e1a36cfcdf58e3282d4aee7a22adebbe0d2c349f",
                     "Content-Type": "application/json",
@@ -74,9 +74,9 @@ async def send_files(video_id: str, files: List[Tuple[str, str]]) -> bool:
         try:
             upload_result = await upload_file_to_convex(contents)
             logger.debug(f"Upload successful, got result: {upload_result}")
-            
+
             update_data: UpdateVideo = {"id": video_id, "status": "uploaded", "files": [{"name": filename, "storageId": upload_result['storageId'], "url": upload_result['url']}]}
-            
+
             logger.debug(f"Preparing to update video with data: {json.dumps(update_data, indent=2)}")
             success = await update_video(update_data)
             if success:
@@ -88,9 +88,9 @@ async def send_files(video_id: str, files: List[Tuple[str, str]]) -> bool:
             success = False
     return success
 
-# Define the directories
-OUTPUTS_DIR = 'outputs'
-DATA_DIR = 'data'
+# Define the directories - use /tmp for Cloud Functions
+OUTPUTS_DIR = os.environ.get('OUTPUTS_DIR', '/tmp/outputs')
+DATA_DIR = os.environ.get('DATA_DIR', '/tmp/data')
 
 async def get_file_type(filename: str, video_id: str) -> str | None:
     """Determine the file type based on filename pattern"""
@@ -108,11 +108,11 @@ async def get_file_type(filename: str, video_id: str) -> str | None:
 
 async def upload_files(video_id: str) -> None:
     files_to_upload = []
-    
+
     # Check chat file from data directory
     chat_filename = f"{video_id}_chat.csv"
     chat_path = os.path.join(DATA_DIR, chat_filename)
-    
+
     logger.debug(f"Checking for chat file at: {chat_path}")
     if os.path.exists(chat_path):
         try:
@@ -121,7 +121,7 @@ async def upload_files(video_id: str) -> None:
                 files_to_upload.append((contents, chat_filename))
         except Exception as e:
             logger.error(f"Error reading {chat_path}: {str(e)}")
-    
+
     # Check files from outputs directory
     logger.debug(f"Checking outputs directory: {OUTPUTS_DIR}")
     for filename in os.listdir(OUTPUTS_DIR):
@@ -135,7 +135,7 @@ async def upload_files(video_id: str) -> None:
                     files_to_upload.append((contents, filename))
             except Exception as e:
                 logger.error(f"Error processing {filename}: {str(e)}")
-    
+
     if files_to_upload:
         success = await send_files(video_id, files_to_upload)
         if success:
@@ -146,13 +146,13 @@ async def upload_files(video_id: str) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Upload video files to Convex')
     parser.add_argument('video_id', type=str, help='The ID of the video to process')
-    
+
     args = parser.parse_args()
-    
+
     if not args.video_id:
         print("Error: video_id is required")
         parser.print_help()
         exit(1)
-        
+
     print(f"Processing files for video ID: {args.video_id}")
     asyncio.run(upload_files(args.video_id))
