@@ -35,20 +35,20 @@ def is_valid_vod_link(vod_link):
 def download_chat(video_id, output_dir):
     """
     Downloads chat using TwitchDownloaderCLI and converts it to CSV format.
-    
+
     Args:
         video_id (str): Twitch VOD ID
         output_dir (Path): Directory to save output files
     """
     json_path = output_dir / f"{video_id}_chat.json"
     csv_path = output_dir / f"{video_id}_chat.csv"
-    
+
     # Ensure output directory exists
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Get the appropriate CLI command for the current OS
     cli_command = get_cli_command()
-    
+
     # Download chat in JSON format
     logging.info(f"Downloading chat for VOD: {video_id}")
     download_cmd = [
@@ -59,20 +59,20 @@ def download_chat(video_id, output_dir):
         "--output",
         str(json_path)
     ]
-    
+
     # Set DOTNET_BUNDLE_EXTRACT_BASE_DIR environment variable
     env = os.environ.copy()
     if platform.system().lower() == 'darwin':  # macOS specific fix
         temp_dir = Path.home() / '.twitch_downloader_temp'
         temp_dir.mkdir(parents=True, exist_ok=True)
         env['DOTNET_BUNDLE_EXTRACT_BASE_DIR'] = str(temp_dir)
-    
+
     try:
         # Add shell=True for Windows to properly execute the .exe
         is_windows = platform.system().lower() == 'windows'
         subprocess.run(
-            download_cmd, 
-            check=True, 
+            download_cmd,
+            check=True,
             shell=is_windows,
             env=env  # Add environment variables
         )
@@ -89,31 +89,31 @@ def download_chat(video_id, output_dir):
         logging.error("Windows: Place TwitchDownloaderCLI.exe in the same directory or add to PATH")
         logging.error("Linux/MacOS: Place TwitchDownloaderCLI in the same directory and ensure it's executable (chmod +x)")
         raise
-    
+
     # Convert JSON to CSV
     convert_json_to_csv(json_path, csv_path)
     logging.info(f"Chat converted to CSV: {csv_path}")
-    
+
     # Optionally remove JSON file to save space
     json_path.unlink()
-    
+
     return csv_path
 
 def convert_json_to_csv(json_path, csv_path):
     """
     Converts the downloaded JSON chat file to CSV format.
-    
+
     Args:
         json_path (Path): Path to input JSON file
         csv_path (Path): Path to output CSV file
     """
     with open(json_path, 'r', encoding='utf-8') as f:
         chat_data = json.load(f)
-    
+
     with open(csv_path, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow(['time', 'username', 'message'])
-        
+
         for comment in chat_data['comments']:
             time_in_seconds = comment['content_offset_seconds']
             username = comment['commenter']['display_name']
@@ -122,18 +122,22 @@ def convert_json_to_csv(json_path, csv_path):
 
 def main(video_id=None, output_dir=None, keep_json=False):
     """Download chat data from a Twitch VOD.
-    
+
     Args:
         video_id (str): Twitch VOD ID
         output_dir (str): Directory to save output files
         keep_json (bool): Whether to keep the intermediate JSON file
     """
+    # Create logs directory if it doesn't exist
+    logs_dir = Path('logs')
+    logs_dir.mkdir(exist_ok=True, parents=True)
+
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(sys.stdout),
-            logging.FileHandler('twitch_chat_downloader.log')
+            logging.FileHandler(logs_dir / 'twitch_chat_downloader.log')
         ]
     )
     logging.info('Process started.')
@@ -162,7 +166,7 @@ if __name__ == "__main__":
     parser.add_argument('--output-dir', type=str, help='Output directory for chat files', default='data')
     parser.add_argument('--keep-json', action='store_true', help='Keep the intermediate JSON file')
     args = parser.parse_args()
-    
+
     try:
         main(args.video_id, args.output_dir, args.keep_json)
     except KeyboardInterrupt:

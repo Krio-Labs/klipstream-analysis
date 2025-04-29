@@ -10,15 +10,19 @@ This Google Cloud Run service analyzes Twitch VODs and uploads the results to Co
 - Performs sentiment analysis on the transcription
 - Analyzes chat data and sentiment
 - Identifies highlights and emotional patterns
-- Uploads all results to Convex storage
+- Uploads all results to Google Cloud Storage buckets with proper folder structure:
+  - `klipstream-vods-raw`: For video, audio, and waveform files (organized in folders by VOD ID)
+  - `klipstream-transcripts`: For transcript paragraph and word files (organized in folders by VOD ID)
+  - `klipstream-chatlogs`: For chat logs (organized in folders by VOD ID)
 
 ## Integration with Frontend
 
 This service is designed to work with the KlipStream frontend project. The workflow is:
 
-1. The frontend creates a video entry in the Convex database when a user submits a Twitch VOD URL
+1. The frontend creates a video entry in the database when a user submits a Twitch VOD URL
 2. The frontend then calls this Cloud Run service with the Twitch VOD URL
-3. This service processes the video and updates the existing Convex record with analysis results using the `convex_upload.py` module
+3. This service processes the video and uploads the results to Google Cloud Storage buckets
+4. The service updates the existing database record with GCS file URLs
 
 ## Requirements
 
@@ -82,7 +86,7 @@ Send a POST request to the Cloud Run service URL:
 }
 ```
 
-**Important**: The Twitch video must already exist in your Convex database before calling this service.
+**Important**: The Twitch video must already exist in your database before calling this service.
 
 ## Testing
 
@@ -97,4 +101,28 @@ functions-framework --target=run_pipeline --debug
 
 # In another terminal, use the test script
 python test_cloud_function.py
+```
+
+For a clean run of the pipeline (recommended):
+
+```bash
+# Clean up directories and run the pipeline
+./run_pipeline.sh https://www.twitch.tv/videos/YOUR_VIDEO_ID
+
+# Or run the cleanup script separately
+python cleanup.py
+python main.py https://www.twitch.tv/videos/YOUR_VIDEO_ID
+```
+
+To test the GCS upload functionality specifically:
+
+```bash
+# Test uploading files to GCS
+python test_gcs_upload.py --video-id YOUR_VIDEO_ID --test-upload
+
+# Test uploading specific files (video, audio, and waveform)
+python test_gcs_upload.py --video-id YOUR_VIDEO_ID --test-specific
+
+# Test updating video status
+python test_gcs_upload.py --video-id YOUR_VIDEO_ID --test-status
 ```

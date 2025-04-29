@@ -38,13 +38,13 @@ def process_chunk(messages, models=None):
     if models is None:
         models = load_models()
     emotion_model, highlight_model = models
-    
+
     try:
         # Get predictions from both models
         emotion_predictions = emotion_model.predict(messages)
         emotion_probabilities = emotion_model.predict_proba(messages)
         highlight_scores = highlight_model.predict(messages)
-        
+
         results = []
         for message, prediction, probs, highlight_score in zip(
             messages, emotion_predictions, emotion_probabilities, highlight_scores
@@ -61,115 +61,120 @@ def process_chunk(messages, models=None):
                 'sadness': 0.0,
                 'neutral': 0.0
             }
-            
+
             # Get the probability for each emotion class
             emotion_probs = dict(zip(emotion_model.classes_, probs))
-            
+
             # Calculate cluster scores
             for cluster_name, emotions in emotion_clusters.items():
                 cluster_score = sum(emotion_probs.get(emotion, 0.0) for emotion in emotions)
                 result[cluster_name] = round(cluster_score, 3)
-            
+
             # Calculate sentiment score
             pos_emotions = ['Excitement', 'Joy', 'Humor']
             neg_emotions = ['Anger', 'Sadness']
-            
+
             pos_score = sum(emotion_probs.get(emotion, 0.0) for emotion in pos_emotions)
             neg_score = sum(emotion_probs.get(emotion, 0.0) for emotion in neg_emotions)
-            
+
             sentiment_score = pos_score - neg_score
             sentiment_score = max(-1.0, min(1.0, sentiment_score))  # Clamp between -1 and 1
             result['sentiment_score'] = round(sentiment_score, 3)
-            
+
             results.append(result)
-            
+
         return results
-        
+
     except Exception as e:
         logging.error(f"Error processing batch: {str(e)}")
         return [{'message': m, 'sentiment_score': None, 'highlight_score': None,
-                'excitement': None, 'funny': None, 'happiness': None, 
+                'excitement': None, 'funny': None, 'happiness': None,
                 'anger': None, 'sadness': None, 'neutral': None} for m in messages]
 
 def analyze_chat_sentiment(video_id):
     """Analyze sentiment for a specific video's chat data."""
     try:
+        # Define directories
+        data_dir = 'data'
+        outputs_dir = 'outputs'
+
+        # Create directories if they don't exist
+        os.makedirs(data_dir, exist_ok=True)
+        os.makedirs(outputs_dir, exist_ok=True)
+
         # Construct input and output file paths
-        input_file = f'data/{video_id}_chat_preprocessed.csv'
-        output_file = f'outputs/{video_id}_chat_sentiment.csv'
+        input_file = f'{data_dir}/{video_id}_chat_preprocessed.csv'
+        output_file = f'{outputs_dir}/{video_id}_chat_sentiment.csv'
 
         if not os.path.exists(input_file):
             raise FileNotFoundError(f"Chat file not found: {input_file}")
 
         # Load both models once
         models = load_models()
-        
+
         # Initialize an empty DataFrame to store all results
         all_final_df = pd.DataFrame()
-        
+
         # Load data in chunks to reduce memory usage
         chunk_size = 10000
         for chunk_num, chunk in enumerate(pd.read_csv(input_file, chunksize=chunk_size)):
-            
+
             logging.info(f"Processing chunk {chunk_num + 1}")
             messages = chunk['message'].values
-            
+
             # Calculate optimal batch size based on available memory
             mem = psutil.virtual_memory()
             available_mem = mem.available / (1024 * 1024 * 1024)  # Convert to GB
             batch_size = min(256 if available_mem > 16 else 128, len(messages))
-            
+
             # Create batches for processing
             message_batches = np.array_split(messages, max(1, len(messages) // batch_size))
-            
+
             # Process batches using ThreadPoolExecutor
             with ThreadPoolExecutor(max_workers=4) as executor:
                 process_fn = partial(process_chunk, models=models)
                 results = list(executor.map(process_fn, message_batches))
-            
+
             # Flatten results
             all_results = [item for batch_result in results for item in batch_result]
-            
+
             # Create DataFrame from results
             output_df = pd.DataFrame(all_results)
-            
+
             if not output_df.empty:
                 # Add index for merging
                 output_df.index = range(len(output_df))
                 chunk.index = range(len(chunk))
-                
+
                 # Merge the dataframes
                 chunk_final_df = pd.concat([
                     chunk[['time', 'username', 'message']],
                     output_df.drop('message', axis=1)
                 ], axis=1)
-                
+
                 # Round scores
-                score_columns = [col for col in chunk_final_df.columns 
+                score_columns = [col for col in chunk_final_df.columns
                                if col not in ['time', 'username', 'message']]
                 chunk_final_df[score_columns] = chunk_final_df[score_columns].round(3)
-                
+
                 # Append to main DataFrame
                 all_final_df = pd.concat([all_final_df, chunk_final_df], ignore_index=True)
-                
+
                 logging.info(f"Processed {len(all_final_df)} messages so far")
             else:
                 logging.error(f"No results were generated for chunk {chunk_num + 1}")
-        
+
         if not all_final_df.empty:
-            # Create outputs directory if it doesn't exist
-            os.makedirs('outputs', exist_ok=True)
-            
             # Save complete results
             all_final_df.to_csv(output_file, index=False)
             logging.info(f"Analysis completed. Total messages processed: {len(all_final_df)}")
             logging.info(f"Results saved to {output_file}")
-            
+
             return output_file
         else:
             logging.error("No results were generated from the analysis")
             return None
-            
+
     except Exception as e:
         logging.error(f"Error in analyze_chat_sentiment: {str(e)}")
         raise
@@ -177,11 +182,11 @@ def analyze_chat_sentiment(video_id):
 def main():
     """Main function that can be called with a video ID."""
     import sys
-    
+
     if len(sys.argv) != 2:
         print("Usage: python chat_sentiment.py <video_id>")
         sys.exit(1)
-        
+
     video_id = sys.argv[1]
     try:
         output_file = analyze_chat_sentiment(video_id)
