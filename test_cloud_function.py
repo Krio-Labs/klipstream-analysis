@@ -3,7 +3,6 @@
 Test script for the Twitch Analysis Cloud Function
 """
 
-import os
 import json
 import requests
 from dotenv import load_dotenv
@@ -16,22 +15,16 @@ def test_local_function():
     url = "http://localhost:8080"
 
     # Get the Twitch video URL from command line or use a default
-    twitch_url = input("Enter Twitch video URL (must already exist in Convex): ")
+    twitch_url = input("Enter Twitch video URL (must already exist in your database): ")
     if not twitch_url:
         twitch_url = "https://www.twitch.tv/videos/2442637981"  # Default video
 
-    # Get the Convex upload URL from environment or prompt
-    convex_url = os.getenv("CONVEX_UPLOAD_URL")
-    if not convex_url:
-        convex_url = input("Enter Convex upload URL: ")
-
     # Prepare the request payload
     payload = {
-        "url": twitch_url,
-        "convex_url": convex_url
+        "url": twitch_url
     }
 
-    print("\nIMPORTANT: The Twitch video must already exist in your Convex database before calling this function.")
+    print("\nIMPORTANT: The Twitch video must already exist in your database before calling this function.")
 
     print(f"Sending request to {url} with payload:")
     print(json.dumps(payload, indent=2))
@@ -57,7 +50,7 @@ def test_deployed_function():
     function_url = input("Enter deployed function URL: ")
 
     # Get the Twitch video URL from command line or use a default
-    twitch_url = input("Enter Twitch video URL (must already exist in Convex): ")
+    twitch_url = input("Enter Twitch video URL (must already exist in your database): ")
     if not twitch_url:
         twitch_url = "https://www.twitch.tv/videos/2442637981"  # Default video
 
@@ -66,7 +59,7 @@ def test_deployed_function():
         "url": twitch_url
     }
 
-    print("\nIMPORTANT: The Twitch video must already exist in your Convex database before calling this function.")
+    print("\nIMPORTANT: The Twitch video must already exist in your database before calling this function.")
 
     print(f"Sending request to {function_url} with payload:")
     print(json.dumps(payload, indent=2))

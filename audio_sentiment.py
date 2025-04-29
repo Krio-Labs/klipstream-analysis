@@ -37,7 +37,7 @@ def init_worker(api_key):
         global model
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel("gemini-1.5-flash-8b")
-        
+
         # Add delay between worker initializations to avoid GRPC issues
         time.sleep(1)
     except Exception as e:
@@ -53,18 +53,18 @@ def process_chunk(paragraphs, start_times, end_times, batch_delay=0.1):
             if not text.strip():
                 logging.info(f"Skipping empty text [{idx}/{total}]")
                 continue
-            
+
             try:
                 time.sleep(batch_delay)
                 logging.info(f"Processing text [{idx}/{total}]: {text[:50]}...")
-                
+
                 # Create prompt and get response
                 prompt = f"""
                 You are an expert at analyzing text and identifying emotions for twitch streams. Analyze the following text and respond ONLY with a JSON object containing emotion probabilities.
                 When you analyze the text, please consider nuances of twitch lingo.
                 The highlight_score ranges from 0 to 1 and indicates the likelihood of the text being something worth marking into a social media clip.
                 The sentiment_score ranges from -1 (most negative) to 1 (most positive).
-                
+
                 Text: "{text}"
 
                 Respond with ONLY this JSON format, no other text:
@@ -79,35 +79,35 @@ def process_chunk(paragraphs, start_times, end_times, batch_delay=0.1):
                     "highlight_score": 0.0
                 }}
                 """
-                
+
                 # Get response from Gemini
                 logging.debug(f"Sending request to Gemini API [{idx}/{total}]")
                 response = model.generate_content(prompt)
-                
+
                 # Process response
                 response_text = response.text.strip()
                 if response_text.startswith("```json") and response_text.endswith("```"):
                     response_text = response_text[7:-3].strip()
-                
+
                 scores = json.loads(response_text)
-                
+
                 # Add the text and timestamps to the scores dictionary
                 scores.update({
                     'text': text,
                     'start_time': start_time,
                     'end_time': end_time
                 })
-                
+
                 logging.info(f"Successfully processed text [{idx}/{total}] with sentiment: {scores['sentiment_score']:.2f}")
                 results.append(scores)
-                
+
             except Exception as e:
                 logging.error(f"Error processing text [{idx}/{total}]: {str(e)}")
                 continue
-                
+
         logging.info(f"Completed chunk processing: {len(results)}/{total} texts successful")
         return results
-        
+
     except Exception as e:
         logging.error(f"Error in process_chunk: {str(e)}")
         return []
@@ -117,7 +117,7 @@ def clean_up_workers():
     try:
         # Add delay before cleanup
         time.sleep(2)  # Give GRPC time to shutdown gracefully
-        
+
         # Kill child processes
         current_process = psutil.Process()
         children = current_process.children(recursive=True)
@@ -127,7 +127,7 @@ def clean_up_workers():
                 child.wait(timeout=3)  # Wait for process to terminate
             except (psutil.NoSuchProcess, psutil.TimeoutExpired):
                 child.kill()  # Force kill if terminate doesn't work
-                
+
         # Clean up multiprocessing resources - Python 3.12 compatible
         import multiprocessing.resource_tracker
         try:
@@ -143,29 +143,33 @@ def clean_up_workers():
 
 def sentiment_analysis(video_id):
     """Main function to process audio sentiment analysis for a specific video
-    
+
     Args:
         video_id (str): The ID of the video to process
         api_key (str): Google API key for sentiment analysis
     """
     # Load environment variables
     load_dotenv()
-    
+
     try:
+        # Define output directory
+        output_dir = 'outputs'
+        os.makedirs(output_dir, exist_ok=True)
+
         # Determine input file path
         if video_id:
-            input_file = f'outputs/audio_{video_id}_paragraphs.csv'
+            input_file = f'{output_dir}/audio_{video_id}_paragraphs.csv'
         else:
             # Default to first audio file found if no video ID provided
-            audio_files = list(Path('outputs').glob('audio_*_paragraphs.csv'))
+            audio_files = list(Path(output_dir).glob('audio_*_paragraphs.csv'))
             if not audio_files:
-                raise FileNotFoundError("No audio paragraph files found in outputs directory")
+                raise FileNotFoundError(f"No audio paragraph files found in {output_dir} directory")
             input_file = str(audio_files[0])
             # Extract video ID from filename
             video_id = Path(input_file).stem.split('_')[1]
-        
+
         logging.info(f"Processing video ID: {video_id}")
-        
+
         # Get API key from environment if not provided
         api_key = os.getenv('GOOGLE_API_KEY')
         if not api_key:
@@ -174,14 +178,14 @@ def sentiment_analysis(video_id):
         # Read the existing CSV file
         logging.info(f"Reading input file: {input_file}")
         df = pd.read_csv(input_file)
-        
+
         paragraphs = df['text'].tolist()
         start_times = df['start_time'].tolist()
         end_times = df['end_time'].tolist()
-        
+
         total_paragraphs = len(paragraphs)
         logging.info(f"Found {total_paragraphs} paragraphs to process")
-        
+
         # Create batches for all three lists
         batch_size = 15
         paragraph_batches = [paragraphs[i:i + batch_size] for i in range(0, len(paragraphs), batch_size)]
@@ -189,15 +193,15 @@ def sentiment_analysis(video_id):
         end_time_batches = [end_times[i:i + batch_size] for i in range(0, len(end_times), batch_size)]
         num_batches = len(paragraph_batches)
         logging.info(f"Split into {num_batches} batches of size {batch_size}")
-        
+
         # Configure Gemini in the main process
         genai.configure(api_key=api_key)
-        
+
         # Process in parallel
         results = []
         num_workers = max(cpu_count()-1, 8)
         logging.info(f"Starting processing with {num_workers} workers")
-        
+
         with ProcessPoolExecutor(
             max_workers=num_workers,
             initializer=init_worker,
@@ -212,27 +216,27 @@ def sentiment_analysis(video_id):
             ), 1):
                 batch_results.append(batch_result)
                 logging.info(f"Completed batch {i}/{num_batches} ({(i/num_batches)*100:.1f}%)")
-            
+
             results = [item for sublist in batch_results if sublist for item in sublist]
-            
+
         logging.info(f"Processing complete. Got results for {len(results)}/{total_paragraphs} paragraphs")
-        
+
         # Convert results to DataFrame
         results_df = pd.DataFrame(results)
-        
+
         # Add new columns to original DataFrame
         emotion_columns = [col for col in results_df.columns if col not in ['start_time', 'end_time', 'text']]
         for col in emotion_columns:
             df[col] = results_df[col]
-        
+
         # Save back to the same file
         logging.info(f"Updating input file with new columns: {input_file}")
         df.to_csv(input_file, index=False)
         logging.info("Save complete")
-        
+
         # Add explicit return True on success
         return True
-        
+
     except Exception as e:
         logging.error(f"Error in sentiment_analysis: {str(e)}")
         return False
@@ -241,16 +245,16 @@ def sentiment_analysis(video_id):
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-    
+
     # Get API key from environment
     api_key = os.getenv('GOOGLE_API_KEY')
     if not api_key:
         raise ValueError("GOOGLE_API_KEY environment variable must be set")
-    
+
     # Parse command line arguments if needed
     import argparse
     parser = argparse.ArgumentParser(description='Process video sentiment analysis')
     parser.add_argument('--video-id', type=str, help='Video ID to process')
     args = parser.parse_args()
-    
+
     sentiment_analysis(video_id=args.video_id)

@@ -13,13 +13,9 @@ if [ ! -f .env.yaml ]; then
     exit 1
 fi
 
-# Build the Docker image
-echo "Building Docker image..."
-docker build -t ${IMAGE_NAME} .
-
-# Push the image to Google Container Registry
-echo "Pushing image to Google Container Registry..."
-docker push ${IMAGE_NAME}
+# Build the Docker image using Cloud Build
+echo "Building Docker image using Cloud Build..."
+gcloud builds submit --tag ${IMAGE_NAME} .
 
 # Update the Cloud Run service
 echo "Updating Cloud Run service..."

@@ -14,8 +14,10 @@ class TranscriptionHandler:
 
     def _setup_logging(self):
         """Configure logging with timestamp, level, and message"""
-        # Use /tmp for log files in cloud environment
-        log_file = '/tmp/transcription.log'
+        # Use local directory for log files
+        log_dir = 'logs'
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, 'transcription.log')
 
         logging.basicConfig(
             level=logging.INFO,
@@ -39,9 +41,12 @@ class TranscriptionHandler:
         aai.settings.api_key = api_key
         logging.info("AssemblyAI API configured")
 
-    async def process_audio_files(self, video_id, input_dir="/tmp/outputs", max_retries=3, timeout=300):
+    async def process_audio_files(self, video_id, input_dir="outputs", max_retries=3, timeout=300):
         """Process audio files in the specified directory for a specific video ID"""
         try:
+            # Create output directory if it doesn't exist
+            os.makedirs(input_dir, exist_ok=True)
+
             # Look for specific audio file with video ID
             audio_file = os.path.join(input_dir, f"audio_{video_id}.wav")
 

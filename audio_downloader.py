@@ -9,10 +9,10 @@ import shutil
 from pathlib import Path
 import psutil
 
-# Define global paths - use /tmp for Cloud Functions
-DOWNLOADS_DIR = Path("/tmp/downloads")
+# Define global paths - use project-relative paths
+DOWNLOADS_DIR = Path("downloads")
 TEMP_DIR = DOWNLOADS_DIR / "temp"
-OUTPUT_DIR = Path("/tmp/outputs")
+OUTPUT_DIR = Path("outputs")
 
 # Create necessary directories
 DOWNLOADS_DIR.mkdir(exist_ok=True, parents=True)
@@ -32,8 +32,11 @@ class TwitchVideoDownloader:
 
     def _setup_logging(self):
         """Configure logging with timestamp, level, and message"""
-        # Use /tmp for log files in cloud environment
-        log_file = '/tmp/twitch_downloader.log'
+        # Use project-relative path for log files
+        log_file = 'logs/twitch_downloader.log'
+
+        # Create logs directory if it doesn't exist
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
         logging.basicConfig(
             level=logging.INFO,
@@ -222,15 +225,20 @@ class TwitchVideoDownloader:
             if not await self._convert_to_wav(str(video_file), str(audio_file)):
                 raise Exception("Audio conversion failed")
 
-            # Cleanup all temporary files and folders
-            self._cleanup_files(TEMP_DIR, video_file)
-            self._cleanup_downloads_folder()
+            # Cleanup temporary folders but keep the video file
+            self._cleanup_temp_folders()
 
-            return audio_file
+            # Return both video and audio files
+            return {
+                "audio_file": audio_file,
+                "video_file": video_file
+            }
 
         except Exception as e:
             logging.error(f"Process failed: {str(e)}")
-            self._cleanup_files(TEMP_DIR, video_file)
+            # Clean up everything in case of an error
+            if 'video_file' in locals():
+                self._cleanup_files(TEMP_DIR, video_file)
             self._cleanup_downloads_folder()
             raise
 
@@ -299,6 +307,25 @@ class TwitchVideoDownloader:
                 logging.info(f"Cleaned up downloads directory: {DOWNLOADS_DIR}")
         except OSError as e:
             logging.warning(f"Error cleaning up downloads directory: {e}")
+
+    def _cleanup_temp_folders(self):
+        """Clean up temporary folders but keep the video and audio files"""
+        try:
+            if os.path.exists(TEMP_DIR):
+                shutil.rmtree(TEMP_DIR)
+                logging.info(f"Cleaned up temporary directory: {TEMP_DIR}")
+
+            # Clean up the downloads folder but keep the outputs folder
+            for item in os.listdir(DOWNLOADS_DIR):
+                item_path = os.path.join(DOWNLOADS_DIR, item)
+                if item_path != str(TEMP_DIR) and os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+                    logging.info(f"Cleaned up directory: {item_path}")
+                elif os.path.isfile(item_path):
+                    os.remove(item_path)
+                    logging.info(f"Cleaned up file: {item_path}")
+        except OSError as e:
+            logging.warning(f"Error during temp folder cleanup: {e}")
 
     async def _run_process_with_progress(self, command, description, progress_pattern=None, duration=None):
         """Run a process with progress bar tracking"""
