@@ -6,6 +6,7 @@ This module orchestrates the analysis of raw files for Twitch VODs.
 
 import os
 import concurrent.futures
+import subprocess
 import pandas as pd
 from pathlib import Path
 
@@ -55,7 +56,7 @@ async def process_analysis(video_id):
         os.makedirs(chat_analysis_dir, exist_ok=True)
 
         # Check if required raw files exist
-        transcript_file = RAW_TRANSCRIPTS_DIR / f"audio_{video_id}_paragraphs.csv"
+        transcript_file = RAW_TRANSCRIPTS_DIR / f"audio_{video_id}_segments.csv"
         audio_file = RAW_AUDIO_DIR / f"audio_{video_id}.wav"
         chat_file = RAW_CHAT_DIR / f"{video_id}_chat.csv"
 
@@ -131,8 +132,14 @@ async def process_analysis(video_id):
             # Wait for audio sentiment analysis to complete
             audio_sentiment_result = audio_sentiment_future.result()
 
+            # Run sliding window analysis
+            logger.info("Step 5: Running sliding window analysis")
+            sliding_window_future = executor.submit(
+                lambda: subprocess.run(["python", "sliding_window_generator.py", video_id, "60", "30"], check=True)
+            )
+
             # Analyze audio transcription highlights
-            logger.info("Step 5: Analyzing audio transcription highlights")
+            logger.info("Step 6: Analyzing audio transcription highlights")
             audio_highlights_future = executor.submit(
                 analyze_transcription_highlights,
                 video_id,
@@ -141,7 +148,7 @@ async def process_analysis(video_id):
             )
 
             # Plot audio metrics
-            logger.info("Step 6: Plotting audio metrics")
+            logger.info("Step 7: Plotting audio metrics")
             audio_plot_future = executor.submit(
                 plot_metrics,
                 str(audio_analysis_dir),
@@ -149,6 +156,7 @@ async def process_analysis(video_id):
             )
 
             # Wait for all remaining tasks to complete
+            sliding_window_result = sliding_window_future.result()
             audio_highlights_result = audio_highlights_future.result()
             # Store the plot result for the return value
             audio_plot_result = audio_plot_future.result()
@@ -172,6 +180,7 @@ async def process_analysis(video_id):
             "status": "completed",
             "video_id": video_id,
             "audio_sentiment": audio_sentiment_result,
+            "sliding_window": sliding_window_result,
             "audio_highlights": audio_highlights_result,
             "audio_plot": audio_plot_result,
             "chat_sentiment": chat_sentiment_result,
