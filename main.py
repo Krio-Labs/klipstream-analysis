@@ -1,23 +1,23 @@
 import asyncio
-import logging
 from pathlib import Path
-import json
 import warnings
 import multiprocessing
 import atexit
 import os
 import functions_framework
-import tempfile
-import shutil
 from dotenv import load_dotenv
 
-from audio_downloader import TwitchVideoDownloader
-from audio_transcription import TranscriptionHandler
+# Import utilities
+from utils.logging_setup import setup_logger
+from utils.helpers import extract_video_id
+
+# Import raw file processor from reorganized structure
+from raw_pipeline import process_raw_files
+
+# Import other modules for analysis
 from audio_sentiment import sentiment_analysis
 from audio_analysis import analyze_transcription_highlights
 from audio_analysis import plot_metrics
-from audio_waveform import process_audio_file
-from chat_download import download_chat
 from chat_processor import process_chat_data
 from chat_sentiment import analyze_chat_sentiment
 from chat_analysis import analyze_chat_intervals, analyze_chat_highlights
@@ -25,11 +25,8 @@ from chat_analysis import analyze_chat_intervals, analyze_chat_highlights
 # Load environment variables
 load_dotenv()
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+# Set up logger
+logger = setup_logger("main", "main.log")
 
 def cleanup():
     try:
@@ -40,59 +37,71 @@ def cleanup():
 atexit.register(cleanup)
 
 import asyncio
-from gcs_upload import upload_files, update_video_status as gcs_update_video_status
+from convex_upload import upload_files
 
-def upload_to_gcs(video_id, video_file=None, audio_file=None, waveform_file=None):
-    """
-    Upload files to Google Cloud Storage
-
-    Args:
-        video_id: The Twitch video ID
-        video_file: Optional path to the video file
-        audio_file: Optional path to the audio file
-        waveform_file: Optional path to the waveform file
-    """
+async def upload_to_convex_async(video_id):
+    """Use the existing convex_upload.py to upload files to Convex"""
     try:
-        logging.info(f"Uploading files for video {video_id} to Google Cloud Storage")
-
-        # Prepare specific files to upload if provided
-        specific_files = []
-        if video_file and os.path.exists(video_file):
-            specific_files.append(video_file)
-            logging.info(f"Adding video file to upload: {video_file}")
-
-        if audio_file and os.path.exists(audio_file):
-            specific_files.append(audio_file)
-            logging.info(f"Adding audio file to upload: {audio_file}")
-
-        if waveform_file and os.path.exists(waveform_file):
-            specific_files.append(waveform_file)
-            logging.info(f"Adding waveform file to upload: {waveform_file}")
-
-        # Upload files
-        uploaded_files = upload_files(video_id, specific_files if specific_files else None)
-        logging.info(f"Successfully uploaded {len(uploaded_files)} files to GCS")
+        logger.info(f"Uploading files for video {video_id} using convex_upload.py")
+        await upload_files(video_id)
         return True
     except Exception as e:
-        logging.error(f"Error uploading files to GCS: {str(e)}")
+        logger.error(f"Error uploading files to Convex: {str(e)}")
+        return False
+
+def upload_to_convex(video_id):
+    """Synchronous wrapper for upload_to_convex_async"""
+    return asyncio.run(upload_to_convex_async(video_id))
+
+async def update_video_status_async(video_id, status, twitch_info=None):
+    """Updates the status of a video in Convex using convex_upload.py"""
+    try:
+        # Import the update_video function from convex_upload
+        from convex_upload import update_video
+
+        # Prepare update data - use the format expected by the Convex endpoint
+        update_data = {"id": video_id, "status": status}
+
+        # Add twitch info if available
+        if twitch_info:
+            # Store the complete twitch_info object
+            update_data["twitch_info"] = twitch_info
+
+            # Also add individual fields for backward compatibility
+            if "title" in twitch_info:
+                update_data["title"] = twitch_info["title"]
+            if "user_name" in twitch_info:
+                update_data["user_name"] = twitch_info["user_name"]
+            if "duration" in twitch_info:
+                update_data["duration"] = str(twitch_info["duration"])
+            if "view_count" in twitch_info:
+                update_data["view_count"] = twitch_info["view_count"]
+            if "published_at" in twitch_info:
+                update_data["published_at"] = twitch_info["published_at"]
+            if "language" in twitch_info:
+                update_data["language"] = twitch_info["language"]
+            if "thumbnail_url" in twitch_info:
+                update_data["thumbnail"] = twitch_info["thumbnail_url"]
+
+        # Update the video
+        logger.info(f"Updating video {video_id} status to {status}")
+        success = await update_video(update_data)
+
+        if success:
+            logger.info(f"Successfully updated video {video_id} status to {status}")
+            return True
+        else:
+            logger.error(f"Failed to update video {video_id} status")
+            return False
+
+    except Exception as e:
+        logger.error(f"Error updating video status: {str(e)}")
+        logger.exception("Full exception details:")
         return False
 
 def update_video_status(video_id, status, twitch_info=None):
-    """Update the status of a video in the database"""
-    try:
-        logging.info(f"Updating video {video_id} status to {status}")
-        success = gcs_update_video_status(video_id, status, twitch_info)
-
-        if success:
-            logging.info(f"Successfully updated video {video_id} status to {status}")
-            return True
-        else:
-            logging.error(f"Failed to update video {video_id} status")
-            return False
-    except Exception as e:
-        logging.error(f"Error updating video status: {str(e)}")
-        logging.exception("Full exception details:")
-        return False
+    """Synchronous wrapper for update_video_status_async"""
+    return asyncio.run(update_video_status_async(video_id, status, twitch_info))
 
 @functions_framework.http
 def run_pipeline(request):
@@ -106,16 +115,9 @@ def run_pipeline(request):
             return 'No url provided', 400
 
         url = request_json['url']
-        # Extract the Twitch video URL from the request
+        # Note: We're using convex_upload.py which handles the URL internally now
 
-        # Clean up directories from previous runs
-        logging.info("Cleaning up directories from previous runs...")
-        try:
-            from cleanup import cleanup_directories
-            cleanup_directories()
-        except Exception as e:
-            logging.warning(f"Error during cleanup: {str(e)}")
-            # Continue with the pipeline even if cleanup fails
+        # Note: We're using convex_upload.py which doesn't need team_id
 
         # Create outputs directory if it doesn't exist
         output_dir = Path("outputs")  # Use project-relative path
@@ -130,7 +132,7 @@ def run_pipeline(request):
         downloads_dir.mkdir(exist_ok=True, parents=True)
 
         # Extract video ID
-        video_id = TwitchVideoDownloader().extract_video_id(url)
+        video_id = extract_video_id(url)
 
         # Update video status to "processing"
         update_video_status(video_id, "processing")
@@ -142,12 +144,9 @@ def run_pipeline(request):
             # Get Twitch metadata
             twitch_info = result.get("twitch_info", {})
 
-            # Upload results to Google Cloud Storage
+            # Upload results to Convex using convex_upload.py
             # This will handle both outputs and data directories
-            video_file = result.get("video_file")
-            audio_file = result.get("audio_file")
-            waveform_file = result.get("waveform_file")
-            upload_success = upload_to_gcs(video_id, video_file, audio_file, waveform_file)
+            upload_success = upload_to_convex(video_id)
 
             # Update video status to "completed"
             update_success = update_video_status(video_id, "completed", twitch_info)
@@ -166,161 +165,112 @@ def run_pipeline(request):
             raise e
 
     except Exception as e:
-        logging.error(f"Error processing request: {str(e)}")
+        logger.error(f"Error processing request: {str(e)}")
         return {"error": str(e)}, 500
 
 async def process_video(url: str):
     """
-    Contains the original run_pipeline logic
+    Process a Twitch VOD URL
+
+    This function first processes the raw files using the raw file processor,
+    then performs analysis on those files.
+
+    Args:
+        url (str): The Twitch VOD URL
+
+    Returns:
+        dict: Dictionary with results and metadata
     """
     try:
-        # Clean up directories from previous runs
-        logging.info("Cleaning up directories from previous runs...")
-        try:
-            from cleanup import cleanup_directories
-            cleanup_directories()
-        except Exception as e:
-            logging.warning(f"Error during cleanup: {str(e)}")
-            # Continue with the pipeline even if cleanup fails
+        # First, process the raw files using our reorganized module
+        logger.info(f"Step 1: Processing raw files for URL: {url}")
+        raw_result = await process_raw_files(url)
 
-        # Create outputs directory if it doesn't exist
-        output_dir = Path("outputs")  # Use project-relative path
-        output_dir.mkdir(exist_ok=True, parents=True)
+        # Extract video_id and file paths from the raw processing result
+        video_id = raw_result["video_id"]
+        logger.info(f"Raw processing completed for video ID: {video_id}")
 
-        # Create data directory for chat files
-        data_dir = Path("data")  # Use project-relative path
-        data_dir.mkdir(exist_ok=True, parents=True)
-
-        # Create downloads directory
-        downloads_dir = Path("downloads")
-        downloads_dir.mkdir(exist_ok=True, parents=True)
-
-        # Get video ID early since we'll need it for multiple steps
-        downloader = TwitchVideoDownloader()
-        video_id = downloader.extract_video_id(url)
+        # Get file paths from the raw processing result
+        files = raw_result["files"]
 
         # Get Twitch video metadata
-        twitch_info = downloader.get_video_metadata(video_id)
+        twitch_info = raw_result.get("twitch_info", {})
 
-        # Step 1: Download audio and video
-        logging.info("Step 1: Downloading audio and video from Twitch...")
-        download_result = await downloader.process_video(url)
-        if not download_result:
-            raise RuntimeError("Failed to download files")
-
-        audio_file = download_result["audio_file"]
-        video_file = download_result["video_file"]
-        logging.info(f"Audio downloaded successfully: {audio_file}")
-        logging.info(f"Video downloaded successfully: {video_file}")
-
-        # Step 2: Transcribe audio with retry logic
-        logging.info("Step 2: Transcribing audio...")
-        max_retries = 3
-        retry_delay = 5  # seconds
-
-        for attempt in range(max_retries):
-            try:
-                transcriber = TranscriptionHandler()
-                transcription_result = await transcriber.process_audio_files(video_id)
-                if transcription_result:
-                    logging.info("Transcription completed successfully")
-                    break
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    logging.warning(f"Transcription attempt {attempt + 1} failed: {str(e)}")
-                    logging.info(f"Retrying in {retry_delay} seconds...")
-                    await asyncio.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-                else:
-                    logging.error("All transcription attempts failed")
-                    raise RuntimeError("Transcription failed after all retry attempts") from e
-
-        # Step 3: Sentiment analysis
-        logging.info("Step 3: Performing sentiment analysis...")
+        # Step 2: Sentiment analysis
+        logger.info("Step 2: Performing sentiment analysis...")
         sentiment_result = sentiment_analysis(video_id=video_id)
         if not sentiment_result:
-            logging.error("Sentiment analysis failed to complete successfully")
+            logger.error("Sentiment analysis failed to complete successfully")
             raise RuntimeError("Sentiment analysis failed")
-        logging.info("Sentiment analysis completed successfully")
+        logger.info("Sentiment analysis completed successfully")
 
-        # Step 4: Generate waveform
-        logging.info("Step 4: Generating audio waveform...")
-        waveform_data = process_audio_file(video_id)
-        waveform_file = None
-        if waveform_data:
-            waveform_file = output_dir / f"audio_{video_id}_waveform.json"
-            with open(waveform_file, 'w') as f:
-                json.dump(waveform_data, f)
-            logging.info(f"Waveform data generated: {len(waveform_data)} points")
-        else:
-            logging.error("Failed to generate waveform data")
+        # Step 3: Audio analysis
+        logger.info("Step 3: Performing audio analysis...")
 
-        # Step 5: Audio analysis
-        logging.info("Step 5: Performing audio analysis...")
-        # Check for paragraphs file in outputs directory
-        paragraphs_file = output_dir / f"audio_{video_id}_paragraphs.csv"
+        # Get paragraphs file path
+        paragraphs_file = files["paragraphs_file"]
 
         # Verify the file exists
-        if not paragraphs_file.exists():
+        if not Path(paragraphs_file).exists():
             raise FileNotFoundError(f"Required file not found: {paragraphs_file}")
 
+        # Get output directory
+        output_dir = Path("outputs")
+
+        # Analyze transcript highlights
         grouped_data = analyze_transcription_highlights(str(paragraphs_file), str(output_dir))
         if grouped_data is not None:
-            logging.info("Chat highlights analysis completed")
+            logger.info("Transcript highlights analysis completed")
 
             # Plot metrics with video_id
             plot_metrics(str(output_dir), video_id)
-            logging.info("Metrics plotting completed")
+            logger.info("Metrics plotting completed")
         else:
-            raise RuntimeError("Chat highlights analysis failed")
+            raise RuntimeError("Transcript highlights analysis failed")
 
-        logging.info("Audio analysis completed")
+        logger.info("Audio analysis completed")
 
-        # Step 6: Download and process chat
-        logging.info("Step 6: Downloading and processing chat data...")
+        # Step 4: Process chat data
+        logger.info("Step 4: Processing chat data...")
         try:
-            chat_file = download_chat(video_id, data_dir)
-            logging.info(f"Chat data downloaded successfully: {chat_file}")
-
             # Process chat data
             process_chat_data(video_id)
-            logging.info("Chat data processed successfully")
+            logger.info("Chat data processed successfully")
 
             # Add chat sentiment analysis
-            logging.info("Step 7: Analyzing chat sentiment...")
+            logger.info("Step 5: Analyzing chat sentiment...")
             sentiment_output = analyze_chat_sentiment(video_id)
             if sentiment_output:
-                logging.info(f"Chat sentiment analysis completed. Results saved to: {sentiment_output}")
+                logger.info(f"Chat sentiment analysis completed. Results saved to: {sentiment_output}")
 
                 # Only run chat analysis if sentiment analysis succeeded
-                logging.info("Step 8: Running chat analysis...")
+                logger.info("Step 6: Running chat analysis...")
                 interval_stats = analyze_chat_intervals(video_id, str(output_dir))
                 if interval_stats is not None:
-                    logging.info("Chat intervals analysis completed")
+                    logger.info("Chat intervals analysis completed")
 
                     # Run highlight analysis
                     analyze_chat_highlights(video_id, str(output_dir))
-                    logging.info("Chat highlights analysis completed")
+                    logger.info("Chat highlights analysis completed")
 
         except Exception as e:
-            logging.error(f"Failed to process chat data: {e}")
+            logger.error(f"Failed to process chat data: {e}")
             # Continue pipeline even if chat operations fail
-            logging.warning("Continuing pipeline without chat data")
+            logger.warning("Continuing pipeline without chat data")
 
-        logging.info("Pipeline completed successfully!")
+        logger.info("Pipeline completed successfully!")
 
         # Return a dictionary with results and metadata
         return {
             "status": "completed",
             "video_id": video_id,
             "twitch_info": twitch_info,
-            "video_file": str(video_file),
-            "audio_file": str(audio_file),
-            "waveform_file": str(waveform_file) if waveform_file else None
+            "files": files,
+            "uploaded_files": raw_result.get("uploaded_files", [])
         }
 
     except Exception as e:
-        logging.error(f"Pipeline failed: {str(e)}")
+        logger.error(f"Pipeline failed: {str(e)}")
         raise
 
 @functions_framework.http
@@ -397,11 +347,7 @@ if __name__ == "__main__":
 
     import argparse
 
-    # Set up logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
+    # Logging is already set up at the top of the file
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Process Twitch VOD audio analysis')
@@ -416,29 +362,26 @@ if __name__ == "__main__":
         # Extract video_id from the result
         video_id = result.get("video_id")
         if video_id:
-            # Upload results to Google Cloud Storage
-            logging.info("Uploading results to Google Cloud Storage...")
-            video_file = result.get("video_file")
-            audio_file = result.get("audio_file")
-            waveform_file = result.get("waveform_file")
-            upload_success = upload_to_gcs(video_id, video_file, audio_file, waveform_file)
+            # Upload results to Convex
+            logger.info("Uploading results to Convex...")
+            upload_success = upload_to_convex(video_id)
             if upload_success:
-                logging.info("Successfully uploaded all files to Google Cloud Storage")
+                logger.info("Successfully uploaded all files to Convex")
             else:
-                logging.error("Failed to upload some or all files to Google Cloud Storage")
+                logger.error("Failed to upload some or all files to Convex")
 
             # Update video status
             twitch_info = result.get("twitch_info", {})
             update_success = update_video_status(video_id, "completed", twitch_info)
             if update_success:
-                logging.info("Successfully updated video status in database")
+                logger.info("Successfully updated video status in Convex")
             else:
-                logging.error("Failed to update video status in database")
+                logger.error("Failed to update video status in Convex")
         else:
-            logging.error("No video_id found in result, cannot upload to Google Cloud Storage")
+            logger.error("No video_id found in result, cannot upload to Convex")
 
     except KeyboardInterrupt:
-        logging.info("Process interrupted by user")
+        logger.info("Process interrupted by user")
     except Exception as e:
-        logging.error(f"Process failed: {str(e)}")
+        logger.error(f"Process failed: {str(e)}")
         raise
