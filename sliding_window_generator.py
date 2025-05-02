@@ -85,12 +85,13 @@ def generate_sliding_windows(video_id, window_size=60, overlap=30):
                 return False
 
         # Get the total duration of the audio
-        min_time = min(words_df['start_time'].min(), paragraphs_df['start_time'].min())
+        # Always start at 0 regardless of the actual first word timestamp
+        min_time = 0
         max_time = max(words_df['end_time'].max(), paragraphs_df['end_time'].max())
-        total_duration = max_time - min_time
+        total_duration = max_time
 
         logger.info(f"Total audio duration: {total_duration:.2f} seconds")
-        logger.info(f"Time range: {min_time:.2f} - {max_time:.2f}")
+        logger.info(f"Time range: {min_time} - {max_time:.2f}")
 
         # Create sliding windows
         step_size = window_size - overlap
@@ -175,7 +176,6 @@ def generate_sliding_windows(video_id, window_size=60, overlap=30):
                 'window_id': window_id,
                 'start_time': start_time,
                 'end_time': end_time,
-                'duration': end_time - start_time,
                 'word_count': word_count,
                 'speech_rate': speech_rate,
                 'text': window_text
@@ -196,12 +196,8 @@ def generate_sliding_windows(video_id, window_size=60, overlap=30):
         logger.info(f"Saving {len(windows_df)} sliding windows to {output_file}")
         windows_df.to_csv(output_file, index=False)
 
-        # Create segments file for analysis pipeline
+        # Create segments file for analysis pipeline - just use the windows as is
         segments_df = windows_df.copy()
-
-        # Add speaker column if needed
-        if 'speaker' not in segments_df.columns:
-            segments_df['speaker'] = 'SPEAKER_00'
 
         # Save segments file
         logger.info(f"Saving {len(segments_df)} segments to {segments_file}")
