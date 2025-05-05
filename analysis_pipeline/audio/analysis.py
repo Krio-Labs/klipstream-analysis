@@ -211,10 +211,10 @@ def plot_metrics(output_dir, video_id):
             ax.grid(True, alpha=0.3)
             ax.legend()
 
-        # Adjust layout and save
+        # Adjust layout but don't save to reduce output files
         plt.tight_layout()
-        plt.savefig(output_dir / f'emotion_analysis_plots_{video_id}.png',
-                   bbox_inches='tight', dpi=300)
+        # Skip saving the plot
+        logger.info(f"Emotion analysis plots generated (not saving to file)")
         plt.close()
 
         return True
@@ -396,10 +396,8 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
         ]
         top_highlights = top_highlights[output_columns]
 
-        # Save to CSV
-        output_file = output_dir / f"audio_{video_id}_top_highlights.csv"
-        top_highlights.to_csv(output_file, index=False)
-        logger.info(f"Top 10 highlights saved to {output_file}")
+        # Skip saving to CSV to reduce output files
+        logger.info(f"Top 10 highlights calculated (not saving to file)")
 
         # List of emotions to analyze
         emotions = ['excitement', 'funny', 'happiness', 'anger', 'sadness']
@@ -445,10 +443,8 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
             ]
             top_emotion_moments = top_emotion_moments[emotion_output_columns]
 
-            # Save to CSV
-            emotion_output_file = output_dir / f"audio_{video_id}_top_{emotion}_moments.csv"
-            top_emotion_moments.to_csv(emotion_output_file, index=False)
-            logger.info(f"Top 5 {emotion} moments saved to {emotion_output_file}")
+            # Skip saving to CSV to reduce output files
+            logger.info(f"Top 5 {emotion} moments calculated (not saving to file)")
 
         return top_highlights
 

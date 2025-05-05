@@ -1027,7 +1027,7 @@ def analyze_audio_sentiment(video_id, input_file=None, output_dir=None, audio_fi
         rolling_stats = RollingAudioStats(window_size=600)  # 10-minute window
 
         # Define a function to process a batch of segments
-        def process_segment_batch(batch_rows, audio_data, model, rolling_stats, batch_size=16):
+        def process_segment_batch(batch_rows, audio_data, _, rolling_stats, batch_size=16):  # _ is unused model parameter
             try:
                 # Extract text, start_time, and end_time from each row
                 texts = []

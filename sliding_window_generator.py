@@ -43,7 +43,6 @@ def generate_sliding_windows(video_id, window_size=60, overlap=30):
     paragraphs_file = f"Output/Raw/Transcripts/audio_{video_id}_paragraphs.csv"
     output_dir = "Output/Analysis/Segments"
     output_file = f"{output_dir}/{video_id}_sliding_windows.csv"
-    segments_file = f"Output/Raw/Transcripts/audio_{video_id}_segments.csv"
 
     # Ensure output directory exists
     os.makedirs(output_dir, exist_ok=True)
@@ -192,16 +191,14 @@ def generate_sliding_windows(video_id, window_size=60, overlap=30):
             logger.error("No valid windows generated")
             return False
 
-        # Save sliding windows
-        logger.info(f"Saving {len(windows_df)} sliding windows to {output_file}")
+        # Save sliding windows to segments file
+        segments_file = f"Output/Raw/Transcripts/audio_{video_id}_segments.csv"
+        logger.info(f"Saving {len(windows_df)} sliding windows to segments file: {segments_file}")
+        windows_df.to_csv(segments_file, index=False)
+
+        # Also save to the sliding windows file for reference
+        logger.info(f"Also saving to sliding windows file: {output_file}")
         windows_df.to_csv(output_file, index=False)
-
-        # Create segments file for analysis pipeline - just use the windows as is
-        segments_df = windows_df.copy()
-
-        # Save segments file
-        logger.info(f"Saving {len(segments_df)} segments to {segments_file}")
-        segments_df.to_csv(segments_file, index=False)
 
         logger.info("Sliding window generation completed successfully")
         return True
