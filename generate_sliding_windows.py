@@ -41,11 +41,10 @@ def create_sliding_windows(video_id, window_size=60, overlap=30):
     # Define file paths
     words_file = f"Output/Raw/Transcripts/audio_{video_id}_words.csv"
     paragraphs_file = f"Output/Raw/Transcripts/audio_{video_id}_paragraphs.csv"
-    output_dir = "Output/Analysis/Segments"
-    output_file = f"{output_dir}/{video_id}_sliding_windows.csv"
+    segments_file = f"Output/Raw/Transcripts/audio_{video_id}_segments.csv"
 
     # Ensure output directory exists
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(os.path.dirname(segments_file), exist_ok=True)
 
     # Check if files exist
     if not os.path.exists(words_file):
@@ -176,13 +175,8 @@ def create_sliding_windows(video_id, window_size=60, overlap=30):
     # Create DataFrame from windows
     windows_df = pd.DataFrame(windows)
 
-    # Save to CSV
-    logger.info(f"Saving {len(windows_df)} sliding windows to {output_file}")
-    windows_df.to_csv(output_file, index=False)
-
-    # Also save in the format expected by the existing analysis modules
-    # This will allow the existing modules to use the sliding windows without modification
-    audio_output_file = f"Output/Raw/Transcripts/audio_{video_id}_segments.csv"
+    # Save to CSV in the format expected by the existing analysis modules
+    logger.info(f"Saving {len(windows_df)} sliding windows to segments file: {segments_file}")
 
     # Create a copy with the expected column names
     segments_df = windows_df.copy()
@@ -201,8 +195,8 @@ def create_sliding_windows(video_id, window_size=60, overlap=30):
         segments_df['speaker'] = 'SPEAKER_00'
 
     # Save to CSV in the format expected by the existing analysis modules
-    logger.info(f"Saving {len(segments_df)} segments to {audio_output_file}")
-    segments_df.to_csv(audio_output_file, index=False)
+    logger.info(f"Saving {len(segments_df)} segments to {segments_file}")
+    segments_df.to_csv(segments_file, index=False)
 
     return windows_df
 
