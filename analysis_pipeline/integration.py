@@ -709,29 +709,31 @@ def plot_all_emotions(integrated_df, output_dir, video_id, smooth=True, window_s
 
 def create_emotion_summary(integrated_df, emotions, output_dir, video_id, smooth=True, window_size=15):
     """
-    Create a summary plot with small versions of all emotion comparisons
+    Create a summary plot with emotion comparisons, audio waveform, speech rate, and chat message count
 
     Args:
         integrated_df (DataFrame): Integrated analysis dataframe
-        emotions (list): List of emotions to include
+        emotions (list): List of emotions to include (neutral will be ignored)
         output_dir (str): Directory to save the plot
         video_id (str): Video ID for filename
         smooth (bool): Whether to apply smoothing
         window_size (int): Size of the smoothing window
     """
+    # Filter out 'neutral' from emotions list
+    emotions = [e for e in emotions if e != 'neutral']
+
     # Calculate rows and columns for subplot grid
     n_emotions = len(emotions)
+    n_technical = 3  # Audio waveform, speech rate, chat message count
+    n_total = n_emotions + n_technical
     n_cols = 2
-    n_rows = (n_emotions + n_cols - 1) // n_cols  # Ceiling division
+    n_rows = (n_total + n_cols - 1) // n_cols  # Ceiling division
 
     # Create figure
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 4 * n_rows))
 
     # Flatten axes array for easier indexing
-    if n_rows > 1:
-        axes = axes.flatten()
-    else:
-        axes = [axes[0], axes[1]]  # Handle case of single row
+    axes = axes.flatten() if n_rows > 1 else [axes[0], axes[1]]
 
     # Plot each emotion
     for i, emotion in enumerate(emotions):
@@ -777,15 +779,75 @@ def create_emotion_summary(integrated_df, emotions, output_dir, video_id, smooth
         # Format x-axis as minutes:seconds
         ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x//60)}:{int(x%60):02d}'))
 
+    # Plot audio waveform
+    ax_waveform = axes[n_emotions]
+    audio_file_path = f"Output/Raw/Audio/audio_{video_id}.wav"
+    waveform_times, waveform_amplitudes = extract_audio_waveform(audio_file_path)
+
+    if len(waveform_times) > 0 and len(waveform_amplitudes) > 0:
+        ax_waveform.plot(waveform_times, waveform_amplitudes, 'g-', linewidth=0.8)
+        ax_waveform.set_title('Audio Waveform')
+        ax_waveform.set_xlabel('Time (min:sec)')
+        ax_waveform.set_ylabel('Amplitude')
+        ax_waveform.grid(True)
+        ax_waveform.set_ylim(-1.05, 1.05)
+        ax_waveform.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x//60)}:{int(x%60):02d}'))
+    else:
+        ax_waveform.text(0.5, 0.5, 'Audio waveform not available',
+                         horizontalalignment='center', verticalalignment='center')
+        ax_waveform.set_title('Audio Waveform')
+
+    # Plot speech rate
+    ax_speech_rate = axes[n_emotions + 1]
+    if 'speech_rate' in integrated_df.columns:
+        speech_rate = integrated_df['speech_rate'].values
+        if smooth:
+            _, speech_rate = apply_smoothing(x, speech_rate, window_size, 'savgol')
+
+        # Calculate average speech rate for reference
+        avg_speech_rate = np.mean(speech_rate)
+
+        ax_speech_rate.plot(x, speech_rate, 'b-', linewidth=1.5)
+        ax_speech_rate.axhline(y=avg_speech_rate, color='r', linestyle='--',
+                              label=f'Avg: {avg_speech_rate:.2f} words/sec')
+        ax_speech_rate.set_title('Speech Rate')
+        ax_speech_rate.set_xlabel('Time (min:sec)')
+        ax_speech_rate.set_ylabel('Words per Second')
+        ax_speech_rate.legend(loc='upper right', fontsize='small')
+        ax_speech_rate.grid(True)
+        ax_speech_rate.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x//60)}:{int(x%60):02d}'))
+    else:
+        ax_speech_rate.text(0.5, 0.5, 'Speech rate data not available',
+                           horizontalalignment='center', verticalalignment='center')
+        ax_speech_rate.set_title('Speech Rate')
+
+    # Plot chat message count
+    ax_chat_count = axes[n_emotions + 2]
+    if 'message_count' in integrated_df.columns:
+        message_count = integrated_df['message_count'].values
+        if smooth:
+            _, message_count = apply_smoothing(x, message_count, window_size, 'savgol')
+
+        ax_chat_count.plot(x, message_count, 'g-', linewidth=1.5)
+        ax_chat_count.set_title('Chat Activity')
+        ax_chat_count.set_xlabel('Time (min:sec)')
+        ax_chat_count.set_ylabel('Message Count')
+        ax_chat_count.grid(True)
+        ax_chat_count.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x//60)}:{int(x%60):02d}'))
+    else:
+        ax_chat_count.text(0.5, 0.5, 'Chat message count not available',
+                          horizontalalignment='center', verticalalignment='center')
+        ax_chat_count.set_title('Chat Activity')
+
     # Hide any unused subplots
-    for i in range(n_emotions, len(axes)):
+    for i in range(n_emotions + n_technical, len(axes)):
         axes[i].set_visible(False)
 
     # Add a title to the entire figure
     if smooth:
-        fig.suptitle('Emotion Summary (Smoothed)', fontsize=16)
+        fig.suptitle('Stream Analysis Summary (Smoothed)', fontsize=16)
     else:
-        fig.suptitle('Emotion Summary', fontsize=16)
+        fig.suptitle('Stream Analysis Summary', fontsize=16)
 
     plt.tight_layout(rect=[0, 0, 1, 0.97])  # Make room for the suptitle
 
@@ -1731,7 +1793,7 @@ def run_integration(video_id):
 
     # Generate selected visualizations
     plot_highlight_comparison(integrated_df, output_dir, video_id)
-    create_emotion_summary(integrated_df, ['excitement', 'funny', 'happiness', 'anger', 'sadness', 'neutral'],
+    create_emotion_summary(integrated_df, ['excitement', 'funny', 'happiness', 'anger', 'sadness'],
                           output_dir, video_id, smooth=True, window_size=15)
 
     # Create editor-focused visualizations
