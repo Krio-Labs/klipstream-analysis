@@ -455,23 +455,34 @@ def calculate_speech_rate(text, start_time, end_time):
     Returns:
         float: Words per second
     """
-    # Handle edge cases
-    if not text or not text.strip():
+    try:
+        # Handle edge cases
+        if not isinstance(text, str):
+            return 0.0
+
+        if not text or not text.strip():
+            return 0.0
+
+        # Ensure start_time and end_time are floats
+        start_time = float(start_time) if start_time is not None else 0.0
+        end_time = float(end_time) if end_time is not None else 0.0
+
+        if end_time <= start_time:
+            return 0.0
+
+        # Count words (simple split by whitespace)
+        word_count = len(text.split())
+
+        # Calculate duration in seconds
+        duration = end_time - start_time
+
+        # Calculate words per second
+        words_per_second = word_count / duration if duration > 0 else 0.0
+
+        return words_per_second
+    except Exception as e:
+        logger.error(f"Error calculating speech rate: {str(e)}")
         return 0.0
-
-    if end_time <= start_time:
-        return 0.0
-
-    # Count words (simple split by whitespace)
-    word_count = len(text.split())
-
-    # Calculate duration in seconds
-    duration = end_time - start_time
-
-    # Calculate words per second
-    words_per_second = word_count / duration if duration > 0 else 0.0
-
-    return words_per_second
 
 def extract_audio_intensity(audio_data, start_time, end_time, rolling_stats=None):
     """
@@ -1167,25 +1178,28 @@ def analyze_audio_sentiment(video_id, input_file=None, output_dir=None, audio_fi
             except Exception as e:
                 logger.error(f"Error processing segment batch: {str(e)}")
                 # Return default scores for each segment in the batch
-                return [{
-                    'excitement': 0.0,
-                    'funny': 0.0,
-                    'happiness': 0.0,
-                    'anger': 0.0,
-                    'sadness': 0.0,
-                    'neutral': 1.0,
-                    'sentiment_score': 0.0,
-                    'highlight_score': 0.0,
-                    'audio_intensity': 0.0,
-                    'audio_intensity_relative': 0.0,
-                    'text': str(text) if isinstance(text, str) else "",
-                    'start_time': float(start_time) if start_time is not None else 0.0,
-                    'end_time': float(end_time) if end_time is not None else 0.0
-                } for text, start_time, end_time in zip(
-                    texts if texts else [""] * len(batch_rows),
-                    start_times if start_times else [0.0] * len(batch_rows),
-                    end_times if end_times else [0.0] * len(batch_rows)
-                )]
+                default_results = []
+
+                # Create a default result for each row in the batch
+                for _, row in batch_rows.iterrows():
+                    default_result = {
+                        'excitement': 0.0,
+                        'funny': 0.0,
+                        'happiness': 0.0,
+                        'anger': 0.0,
+                        'sadness': 0.0,
+                        'neutral': 1.0,
+                        'sentiment_score': 0.0,
+                        'highlight_score': 0.0,
+                        'audio_intensity': 0.0,
+                        'audio_intensity_relative': 0.0,
+                        'text': str(row.get('text', "")),
+                        'start_time': float(row.get('start_time', 0.0)),
+                        'end_time': float(row.get('end_time', 0.0))
+                    }
+                    default_results.append(default_result)
+
+                return default_results
 
         # Process all segments without filtering by length
         filtered_df = df.copy()
