@@ -1729,7 +1729,12 @@ def run_integration(video_id):
     logger.info(f"Saving integrated analysis to {integrated_output_path}")
     integrated_df.to_csv(integrated_output_path, index=False)
 
-    # Create editor-focused visualizations only
+    # Generate selected visualizations
+    plot_highlight_comparison(integrated_df, output_dir, video_id)
+    create_emotion_summary(integrated_df, ['excitement', 'funny', 'happiness', 'anger', 'sadness', 'neutral'],
+                          output_dir, video_id, smooth=True, window_size=15)
+
+    # Create editor-focused visualizations
     create_editors_highlight_view(integrated_df, output_dir, video_id)
 
     # Extract top highlights
@@ -1752,9 +1757,7 @@ def run_integration(video_id):
 
         # Unnecessary visualization files
         f"{output_dir}/{video_id}_emotional_coherence.png",
-        f"{output_dir}/{video_id}_highlight_comparison.png",
-        f"{output_dir}/{video_id}_fused_emotions_combined.png",
-        f"{output_dir}/{video_id}_emotion_summary.png"
+        f"{output_dir}/{video_id}_fused_emotions_combined.png"
     ]
 
     # Also remove files in the emotions folder
