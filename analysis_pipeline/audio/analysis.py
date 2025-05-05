@@ -42,16 +42,32 @@ def plot_metrics(output_dir, video_id):
         file_path = output_dir / f"audio_{video_id}_sentiment.csv"
         if not file_path.exists():
             # Try in Raw directory
-            raw_file_path = Path(f'Output/Raw/Transcripts/audio_{video_id}_paragraphs.csv')
+            raw_file_path = Path(f'Output/Raw/Transcripts/audio_{video_id}_segments.csv')
             if os.path.exists(raw_file_path):
                 file_path = raw_file_path
-                logger.info(f"Using paragraphs file from Raw directory: {file_path}")
+                logger.info(f"Using segments file from Raw directory: {file_path}")
             else:
-                raise FileNotFoundError(f"Could not find paragraphs file in {file_path} or {raw_file_path}")
+                raise FileNotFoundError(f"Could not find segments file in {file_path} or {raw_file_path}")
         else:
             logger.info(f"Using sentiment file from: {file_path}")
 
         df = pd.read_csv(file_path)
+
+        # Check for required columns and add them if missing
+        required_columns = [
+            'sentiment_score', 'highlight_score',
+            'excitement', 'funny', 'happiness', 'anger', 'sadness', 'neutral'
+        ]
+
+        for col in required_columns:
+            if col not in df.columns:
+                logger.warning(f"Missing column in data: {col}, adding with default values")
+                if col in ['sentiment_score', 'highlight_score']:
+                    df[col] = 0.0
+                elif col in ['excitement', 'funny', 'happiness', 'anger', 'sadness']:
+                    df[col] = 0.0
+                elif col == 'neutral':
+                    df[col] = 1.0
 
         # Create figure with subplots
         emotions = ['excitement', 'funny', 'happiness', 'anger', 'sadness', 'neutral']
@@ -214,7 +230,7 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
 
     Args:
         video_id (str): The ID of the video to analyze
-        input_file (str, optional): Path to the input paragraphs CSV file
+        input_file (str, optional): Path to the input segments CSV file
         output_dir (str, optional): Directory to save output files
 
     Returns:
@@ -231,7 +247,7 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
 
         # Determine input file path
         if input_file is None:
-            input_file = Path(f'Output/Raw/Transcripts/audio_{video_id}_paragraphs.csv')
+            input_file = Path(f'Output/Raw/Transcripts/audio_{video_id}_segments.csv')
         else:
             input_file = Path(input_file)
 
@@ -299,9 +315,42 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
             'excitement', 'funny', 'happiness', 'anger', 'sadness', 'neutral'
         ]
         missing_columns = [col for col in required_columns if col not in data.columns]
+
+        # If columns are missing, try to load the sentiment file instead
         if missing_columns:
-            logger.error(f"Missing columns in data: {missing_columns}")
-            return None
+            logger.warning(f"Missing columns in data: {missing_columns}")
+
+            # Try to load the sentiment file
+            sentiment_file = Path(f'Output/Analysis/Audio/audio_{video_id}_sentiment.csv')
+            if os.path.exists(sentiment_file):
+                logger.info(f"Loading sentiment data from {sentiment_file}")
+                data = pd.read_csv(sentiment_file)
+                data.columns = data.columns.str.strip()
+
+                # Check again for required columns
+                missing_columns = [col for col in required_columns if col not in data.columns]
+                if missing_columns:
+                    logger.error(f"Still missing columns after loading sentiment file: {missing_columns}")
+
+                    # Add missing columns with default values
+                    for col in missing_columns:
+                        if col in ['sentiment_score', 'highlight_score']:
+                            data[col] = 0.0
+                        elif col in ['excitement', 'funny', 'happiness', 'anger', 'sadness']:
+                            data[col] = 0.0
+                        elif col == 'neutral':
+                            data[col] = 1.0
+            else:
+                logger.warning(f"Sentiment file not found: {sentiment_file}")
+
+                # Add missing columns with default values
+                for col in missing_columns:
+                    if col in ['sentiment_score', 'highlight_score']:
+                        data[col] = 0.0
+                    elif col in ['excitement', 'funny', 'happiness', 'anger', 'sadness']:
+                        data[col] = 0.0
+                    elif col == 'neutral':
+                        data[col] = 1.0
 
         # Calculate a combined emotion score
         data['emotion_intensity'] = data[['excitement', 'funny', 'happiness', 'anger', 'sadness']].max(axis=1)

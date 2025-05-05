@@ -940,7 +940,7 @@ def analyze_audio_sentiment(video_id, input_file=None, output_dir=None, audio_fi
 
     Args:
         video_id (str): The ID of the video to process
-        input_file (str, optional): Path to the input paragraphs CSV file
+        input_file (str, optional): Path to the input segments CSV file
         output_dir (str, optional): Directory to save output files
         audio_file (str, optional): Path to the audio file
 
@@ -962,12 +962,12 @@ def analyze_audio_sentiment(video_id, input_file=None, output_dir=None, audio_fi
         # Determine input file path
         if input_file is None:
             if video_id:
-                input_file = Path(f'Output/Raw/Transcripts/audio_{video_id}_paragraphs.csv')
+                input_file = Path(f'Output/Raw/Transcripts/audio_{video_id}_segments.csv')
             else:
                 # Default to first audio file found if no video ID provided
-                audio_files = list(Path('Output/Raw/Transcripts').glob('audio_*_paragraphs.csv'))
+                audio_files = list(Path('Output/Raw/Transcripts').glob('audio_*_segments.csv'))
                 if not audio_files:
-                    raise FileNotFoundError(f"No audio paragraph files found in Output/Raw/Transcripts directory")
+                    raise FileNotFoundError(f"No audio segment files found in Output/Raw/Transcripts directory")
                 input_file = str(audio_files[0])
                 # Extract video ID from filename
                 video_id = Path(input_file).stem.split('_')[1]
@@ -1015,8 +1015,8 @@ def analyze_audio_sentiment(video_id, input_file=None, output_dir=None, audio_fi
         # Initialize rolling audio stats for Z-score calculation
         rolling_stats = RollingAudioStats(window_size=600)  # 10-minute window
 
-        # Define a function to process a batch of paragraphs
-        def process_paragraph_batch(batch_rows, audio_data, model, rolling_stats, batch_size=16):
+        # Define a function to process a batch of segments
+        def process_segment_batch(batch_rows, audio_data, model, rolling_stats, batch_size=16):
             try:
                 # Extract text, start_time, and end_time from each row
                 texts = []
@@ -1045,7 +1045,7 @@ def analyze_audio_sentiment(video_id, input_file=None, output_dir=None, audio_fi
                 # Calculate average speech rate for normalization
                 avg_speech_rate = total_words / total_duration if total_duration > 0 else 1.0
 
-                # Now process each paragraph
+                # Now process each segment
                 for _, row in batch_rows.iterrows():
                     texts.append(row['text'])
                     start_times.append(row['start_time'])
@@ -1147,7 +1147,7 @@ def analyze_audio_sentiment(video_id, input_file=None, output_dir=None, audio_fi
                             'confidence': confidence
                         })
 
-                # Generate final scores for each paragraph
+                # Generate final scores for each segment
                 batch_results = []
                 for i in range(len(texts)):
                     # Generate scores with pre-computed results, including speech rate
@@ -1165,8 +1165,8 @@ def analyze_audio_sentiment(video_id, input_file=None, output_dir=None, audio_fi
                 return batch_results
 
             except Exception as e:
-                logger.error(f"Error processing paragraph batch: {str(e)}")
-                # Return default scores for each paragraph in the batch
+                logger.error(f"Error processing segment batch: {str(e)}")
+                # Return default scores for each segment in the batch
                 return [{
                     'excitement': 0.0,
                     'funny': 0.0,
@@ -1178,23 +1178,27 @@ def analyze_audio_sentiment(video_id, input_file=None, output_dir=None, audio_fi
                     'highlight_score': 0.0,
                     'audio_intensity': 0.0,
                     'audio_intensity_relative': 0.0,
-                    'text': text,
-                    'start_time': start_time,
-                    'end_time': end_time
-                } for text, start_time, end_time in zip(texts, start_times, end_times)]
+                    'text': str(text) if isinstance(text, str) else "",
+                    'start_time': float(start_time) if start_time is not None else 0.0,
+                    'end_time': float(end_time) if end_time is not None else 0.0
+                } for text, start_time, end_time in zip(
+                    texts if texts else [""] * len(batch_rows),
+                    start_times if start_times else [0.0] * len(batch_rows),
+                    end_times if end_times else [0.0] * len(batch_rows)
+                )]
 
-        # Process all paragraphs without filtering by length
+        # Process all segments without filtering by length
         filtered_df = df.copy()
 
-        logger.info(f"Processing all {len(filtered_df)} paragraphs")
+        logger.info(f"Processing all {len(filtered_df)} segments")
 
-        # Generate scores for paragraphs using batch processing
-        logger.info("Generating emotion, sentiment, and audio intensity scores for paragraphs")
+        # Generate scores for segments using batch processing
+        logger.info("Generating emotion, sentiment, and audio intensity scores for segments")
         results = []
         total_rows = len(filtered_df)
 
         # Determine batch size and number of workers
-        batch_size = 16  # Process 16 paragraphs in a single model inference
+        batch_size = 16  # Process 16 segments in a single model inference
         max_workers = min(os.cpu_count() or 4, 4)  # Use at most 4 workers for batch processing
         logger.info(f"Using batch size {batch_size} with {max_workers} parallel workers")
 
@@ -1208,7 +1212,7 @@ def analyze_audio_sentiment(video_id, input_file=None, output_dir=None, audio_fi
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit batch processing tasks
             future_to_batch = {
-                executor.submit(process_paragraph_batch, batch_df, audio_data, model, rolling_stats, batch_size): i
+                executor.submit(process_segment_batch, batch_df, audio_data, model, rolling_stats, batch_size): i
                 for i, batch_df in enumerate(batch_dfs)
             }
 
@@ -1219,16 +1223,16 @@ def analyze_audio_sentiment(video_id, input_file=None, output_dir=None, audio_fi
                 results.extend(batch_results)
 
                 completed_batches += 1
-                completed_paragraphs = min(completed_batches * batch_size, total_rows)
+                completed_segments = min(completed_batches * batch_size, total_rows)
 
                 # Log progress periodically
                 if completed_batches % 5 == 0 or completed_batches == len(batch_dfs):
-                    logger.info(f"Processed {completed_paragraphs}/{total_rows} paragraphs ({completed_paragraphs/total_rows*100:.1f}%)")
+                    logger.info(f"Processed {completed_segments}/{total_rows} segments ({completed_segments/total_rows*100:.1f}%)")
 
             # Add a small delay to avoid overwhelming the system
             time.sleep(0.2)
 
-        logger.info(f"Processing complete. Generated scores for {len(results)}/{total_rows} paragraphs")
+        logger.info(f"Processing complete. Generated scores for {len(results)}/{total_rows} segments")
 
         # Convert results to DataFrame
         results_df = pd.DataFrame(results)
