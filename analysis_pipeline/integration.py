@@ -359,16 +359,16 @@ def integrate_chat_and_audio_analysis(audio_df, chat_df):
     audio_weight, chat_weight = determine_optimal_weights(audio_df, chat_df)
     logger.info(f"Determined optimal weights: audio={audio_weight:.2f}, chat={chat_weight:.2f}")
 
-    # Process each paragraph
+    # Process each segment
     total_rows = len(integrated_df)
-    logger.info(f"Processing {total_rows} paragraphs")
+    logger.info(f"Processing {total_rows} segments")
 
     for i, row in integrated_df.iterrows():
         # Log progress periodically
         if i % 100 == 0 or i == total_rows - 1:
-            logger.info(f"Processing paragraph {i+1}/{total_rows} ({(i+1)/total_rows*100:.1f}%)")
+            logger.info(f"Processing segment {i+1}/{total_rows} ({(i+1)/total_rows*100:.1f}%)")
 
-        # Get time range for this paragraph
+        # Get time range for this segment
         start_time = row['start_time']
         end_time = row['end_time']
 
@@ -1708,7 +1708,7 @@ def run_integration(video_id):
     logger.info(f"Loading audio sentiment data from {audio_sentiment_path}")
     try:
         audio_df = pd.read_csv(audio_sentiment_path)
-        logger.info(f"Loaded {len(audio_df)} paragraphs from audio sentiment file")
+        logger.info(f"Loaded {len(audio_df)} segments from audio sentiment file")
     except Exception as e:
         logger.error(f"Error loading audio sentiment data: {str(e)}")
         return False
@@ -1742,6 +1742,26 @@ def run_integration(video_id):
     top_highlights_path = f"{output_dir}/{video_id}_top_highlights.csv"
     top_highlights.to_csv(top_highlights_path, index=False)
     logger.info(f"Top 10 highlights saved to {top_highlights_path}")
+
+    # Remove temporary files
+    audio_dir = os.path.dirname(audio_sentiment_path)
+    temp_files = [
+        f"{audio_dir}/audio_{video_id}_top_highlights.csv",
+        f"{audio_dir}/audio_{video_id}_top_excitement_moments.csv",
+        f"{audio_dir}/audio_{video_id}_top_funny_moments.csv",
+        f"{audio_dir}/audio_{video_id}_top_happiness_moments.csv",
+        f"{audio_dir}/audio_{video_id}_top_anger_moments.csv",
+        f"{audio_dir}/audio_{video_id}_top_sadness_moments.csv",
+        f"{audio_dir}/emotion_analysis_plots_{video_id}.png"
+    ]
+
+    for file_path in temp_files:
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                logger.info(f"Removed temporary file: {file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to remove temporary file {file_path}: {str(e)}")
 
     logger.info("Integration completed successfully")
     return True
