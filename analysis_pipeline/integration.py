@@ -823,8 +823,8 @@ def create_emotion_summary(integrated_df, emotions, output_dir, video_id, smooth
 
     # Plot chat message count
     ax_chat_count = axes[n_emotions + 2]
-    if 'message_count' in integrated_df.columns:
-        message_count = integrated_df['message_count'].values
+    if 'chat_volume' in integrated_df.columns:
+        message_count = integrated_df['chat_volume'].values
         if smooth:
             _, message_count = apply_smoothing(x, message_count, window_size, 'savgol')
 
