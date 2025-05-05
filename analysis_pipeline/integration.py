@@ -1729,12 +1729,7 @@ def run_integration(video_id):
     logger.info(f"Saving integrated analysis to {integrated_output_path}")
     integrated_df.to_csv(integrated_output_path, index=False)
 
-    # Generate visualizations
-    plot_emotional_coherence(integrated_df, output_dir, video_id)
-    plot_highlight_comparison(integrated_df, output_dir, video_id)
-    plot_fused_emotions(integrated_df, output_dir, video_id)
-
-    # Create editor-focused visualizations
+    # Create editor-focused visualizations only
     create_editors_highlight_view(integrated_df, output_dir, video_id)
 
     # Extract top highlights
@@ -1746,14 +1741,41 @@ def run_integration(video_id):
     # Remove temporary files
     audio_dir = os.path.dirname(audio_sentiment_path)
     temp_files = [
+        # Audio temporary files
         f"{audio_dir}/audio_{video_id}_top_highlights.csv",
         f"{audio_dir}/audio_{video_id}_top_excitement_moments.csv",
         f"{audio_dir}/audio_{video_id}_top_funny_moments.csv",
         f"{audio_dir}/audio_{video_id}_top_happiness_moments.csv",
         f"{audio_dir}/audio_{video_id}_top_anger_moments.csv",
         f"{audio_dir}/audio_{video_id}_top_sadness_moments.csv",
-        f"{audio_dir}/emotion_analysis_plots_{video_id}.png"
+        f"{audio_dir}/emotion_analysis_plots_{video_id}.png",
+
+        # Unnecessary visualization files
+        f"{output_dir}/{video_id}_emotional_coherence.png",
+        f"{output_dir}/{video_id}_highlight_comparison.png",
+        f"{output_dir}/{video_id}_fused_emotions_combined.png",
+        f"{output_dir}/{video_id}_emotion_summary.png"
     ]
+
+    # Also remove files in the emotions folder
+    emotions_dir = os.path.join(output_dir, "emotions")
+    if os.path.exists(emotions_dir):
+        for emotion in ['excitement', 'funny', 'happiness', 'anger', 'sadness', 'neutral']:
+            emotion_file = os.path.join(emotions_dir, f"{video_id}_{emotion}_comparison.png")
+            if os.path.exists(emotion_file):
+                try:
+                    os.remove(emotion_file)
+                    logger.info(f"Removed unnecessary file: {emotion_file}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove file {emotion_file}: {str(e)}")
+
+        # Try to remove the emotions directory if it's empty
+        try:
+            os.rmdir(emotions_dir)
+            logger.info(f"Removed empty directory: {emotions_dir}")
+        except Exception:
+            # Directory might not be empty or other error, just ignore
+            pass
 
     for file_path in temp_files:
         if os.path.exists(file_path):
