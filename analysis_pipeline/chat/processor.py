@@ -250,7 +250,7 @@ def process_chat_data(video_id, input_file=None, output_dir=None):
     try:
         # Define output directory
         if output_dir is None:
-            output_dir = Path('Output/Analysis/Chat')
+            output_dir = Path('output/Analysis/Chat')
         else:
             output_dir = Path(output_dir)
 
@@ -258,7 +258,7 @@ def process_chat_data(video_id, input_file=None, output_dir=None):
 
         # Determine input file path
         if input_file is None:
-            input_file = Path(f'Output/Raw/Chat/{video_id}_chat.csv')
+            input_file = Path(f'output/Raw/Chat/{video_id}_chat.csv')
         else:
             input_file = Path(input_file)
 

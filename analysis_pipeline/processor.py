@@ -18,7 +18,7 @@ from utils.config import (
     ANALYSIS_DIR
 )
 
-from .audio.sentiment import analyze_audio_sentiment
+from .audio.sentiment_nebius import analyze_audio_sentiment
 from .audio.analysis import analyze_transcription_highlights, plot_metrics
 from .chat.processor import process_chat_data
 from .chat.sentiment import analyze_chat_sentiment
@@ -132,11 +132,17 @@ async def process_analysis(video_id):
             # Wait for audio sentiment analysis to complete
             audio_sentiment_result = audio_sentiment_future.result()
 
-            # Run sliding window analysis
-            logger.info("Step 5: Running sliding window analysis")
-            sliding_window_future = executor.submit(
-                lambda: subprocess.run(["python", "sliding_window_generator.py", video_id, "60", "30"], check=True)
-            )
+            # Check if sliding window segments file already exists
+            segments_file = RAW_TRANSCRIPTS_DIR / f"audio_{video_id}_segments.csv"
+            if segments_file.exists():
+                logger.info(f"Sliding window segments file already exists: {segments_file}")
+                sliding_window_future = executor.submit(lambda: True)  # Return True without running the generator
+            else:
+                # Run sliding window analysis only if the file doesn't exist
+                logger.info("Step 5: Running sliding window analysis")
+                sliding_window_future = executor.submit(
+                    lambda: subprocess.run(["python", "sliding_window_generator.py", video_id, "60", "30"], check=True)
+                )
 
             # Analyze audio transcription highlights
             logger.info("Step 6: Analyzing audio transcription highlights")

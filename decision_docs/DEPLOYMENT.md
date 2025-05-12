@@ -7,7 +7,7 @@ This document provides instructions for deploying the Twitch Analysis service to
 1. Google Cloud Platform account with Cloud Run enabled
 2. Docker installed on your local machine
 3. Google Cloud CLI (gcloud) installed and configured
-4. AssemblyAI API key
+4. Deepgram API key
 5. Google API key (for sentiment analysis)
 6. Google Cloud Storage buckets created:
    - `klipstream-vods-raw`
@@ -22,7 +22,7 @@ This project is set up to update the existing "Chat-Audio-Analytics" Cloud Run s
 1. Update the `.env.yaml` file with your API keys and GCS configuration:
 
 ```yaml
-ASSEMBLYAI_API_KEY: "your_assemblyai_api_key_here"
+DEEPGRAM_API_KEY: "your_deepgram_api_key_here"
 GOOGLE_API_KEY: "your_google_api_key_here"
 GCS_PROJECT: "klipstream"
 GCS_VOD_BUCKET: "klipstream-vods-raw"

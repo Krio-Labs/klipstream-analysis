@@ -5,11 +5,12 @@ This module handles uploading files to Google Cloud Storage.
 """
 
 import os
-import logging
+import json
 from pathlib import Path
 from typing import List, Dict
 from google.cloud import storage
 from google.api_core.exceptions import GoogleAPIError
+from google.oauth2 import service_account
 
 from utils.config import (
     VODS_BUCKET,
@@ -19,7 +20,8 @@ from utils.config import (
     RAW_AUDIO_DIR,
     RAW_WAVEFORMS_DIR,
     RAW_TRANSCRIPTS_DIR,
-    RAW_CHAT_DIR
+    RAW_CHAT_DIR,
+    GCP_SERVICE_ACCOUNT_PATH
 )
 from utils.logging_setup import setup_logger
 
@@ -29,73 +31,100 @@ logger = setup_logger("uploader", "gcs_upload.log")
 def get_bucket_for_file(file_path: str) -> str:
     """
     Determine the appropriate GCS bucket for a file based on its type
-    
+
     Args:
         file_path (str): Path to the file
-        
+
     Returns:
         str: Name of the GCS bucket
     """
     file_path = str(file_path).lower()
-    
-    if any(ext in file_path for ext in ['.mp4', '.wav', '.json']):
-        if 'waveform' in file_path:
-            return VODS_BUCKET
-        elif 'audio' in file_path or 'video' in file_path:
-            return VODS_BUCKET
-        elif 'transcript' in file_path or 'paragraphs' in file_path or 'words' in file_path:
-            return TRANSCRIPTS_BUCKET
+
+    # Check for transcript files first (paragraphs, words, segments)
+    if 'transcript' in file_path or 'paragraphs' in file_path or 'words' in file_path or 'segments' in file_path:
+        return TRANSCRIPTS_BUCKET
+    # Check for chat files
     elif 'chat' in file_path:
         return CHATLOGS_BUCKET
-    
+    # All other files (video, audio, waveform) go to VODS_BUCKET
+    elif any(ext in file_path for ext in ['.mp4', '.wav', '.json']):
+        return VODS_BUCKET
+
     # Default to VODS_BUCKET
     return VODS_BUCKET
 
 def upload_file_to_gcs(file_path: str, video_id: str) -> Dict:
     """
     Upload a file to Google Cloud Storage
-    
+
     Args:
         file_path (str): Path to the file to upload
         video_id (str): The Twitch video ID
-        
+
     Returns:
         dict: Information about the uploaded file
     """
     try:
         file_path = Path(file_path)
-        
+
         # Skip if file doesn't exist
         if not file_path.exists():
             logger.warning(f"File not found, skipping upload: {file_path}")
             return None
-        
+
         # Determine bucket based on file type
         bucket_name = get_bucket_for_file(file_path)
-        
+
         # Create GCS client
-        client = storage.Client()
+        # Try to use the new service account credentials
+        new_key_path = "./new-service-account-key.json"
+        if os.path.exists(new_key_path):
+            try:
+                logger.info(f"Using service account credentials from {new_key_path}")
+                # Load the service account key file to verify its contents
+                with open(new_key_path, 'r') as f:
+                    key_data = json.load(f)
+                    logger.info(f"Service account email: {key_data.get('client_email', 'Not found')}")
+                    logger.info(f"Project ID: {key_data.get('project_id', 'Not found')}")
+
+                credentials = service_account.Credentials.from_service_account_file(
+                    new_key_path,
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"]
+                )
+                client = storage.Client(credentials=credentials, project=key_data.get('project_id'))
+            except Exception as e:
+                logger.warning(f"Failed to use service account credentials: {str(e)}")
+                logger.warning(f"Exception type: {type(e).__name__}")
+                import traceback
+                logger.warning(f"Traceback: {traceback.format_exc()}")
+                logger.info("Falling back to application default credentials")
+                client = storage.Client()
+        else:
+            # Use application default credentials
+            logger.info("No service account key file found, using application default credentials")
+            client = storage.Client()
+
         bucket = client.bucket(bucket_name)
-        
+
         # Determine destination path in GCS
         blob_name = f"{video_id}/{file_path.name}"
         blob = bucket.blob(blob_name)
-        
+
         # Upload file
         logger.info(f"Uploading {file_path} to gs://{bucket_name}/{blob_name}")
         blob.upload_from_filename(file_path)
-        
-        # Make the blob publicly readable
-        blob.make_public()
-        
+
+        # Generate a GCS URI for the uploaded file
+        gcs_uri = f"gs://{bucket_name}/{blob_name}"
+
         # Return information about the uploaded file
         return {
             "file_path": str(file_path),
             "bucket": bucket_name,
             "blob_name": blob_name,
-            "public_url": blob.public_url
+            "gcs_uri": gcs_uri
         }
-    
+
     except GoogleAPIError as e:
         logger.error(f"Google API error uploading {file_path}: {str(e)}")
         return None
@@ -105,24 +134,25 @@ def upload_file_to_gcs(file_path: str, video_id: str) -> Dict:
 
 def upload_files(video_id: str, specific_files: List[str] = None) -> List[Dict]:
     """
-    Upload only the 6 specific raw files for a video to GCS:
+    Upload only the 7 specific raw files for a video to GCS:
     1. Video file (.mp4)
     2. Audio file (.wav)
     3. Waveform file (.json)
     4. Transcript paragraphs file (.csv)
     5. Transcript words file (.csv)
-    6. Chat file (.csv)
-    
+    6. Transcript segments file (.csv)
+    7. Chat file (.csv)
+
     Args:
         video_id: The Twitch video ID
         specific_files: Optional list of specific file paths to upload
-        
+
     Returns:
         List of dictionaries with information about uploaded files
     """
     uploaded_files = []
-    
-    # Define the 6 specific files we want to upload from Output/Raw
+
+    # Define the 7 specific files we want to upload from Output/Raw
     raw_files_to_upload = [
         # 1. Video file
         str(RAW_VIDEOS_DIR / f"{video_id}.mp4"),
@@ -134,10 +164,12 @@ def upload_files(video_id: str, specific_files: List[str] = None) -> List[Dict]:
         str(RAW_TRANSCRIPTS_DIR / f"audio_{video_id}_paragraphs.csv"),
         # 5. Transcript words file
         str(RAW_TRANSCRIPTS_DIR / f"audio_{video_id}_words.csv"),
-        # 6. Chat file
+        # 6. Transcript segments file
+        str(RAW_TRANSCRIPTS_DIR / f"audio_{video_id}_segments.csv"),
+        # 7. Chat file
         str(RAW_CHAT_DIR / f"{video_id}_chat.csv")
     ]
-    
+
     # If specific files are provided, filter them to ensure they match our expected files
     if specific_files:
         # Only upload files that are in our list of raw files
@@ -148,13 +180,13 @@ def upload_files(video_id: str, specific_files: List[str] = None) -> List[Dict]:
                 if os.path.basename(file_path) == os.path.basename(raw_file):
                     filtered_files.append(file_path)
                     break
-        
+
         # Use the filtered list
         files_to_check = filtered_files
     else:
         # Use our predefined list
         files_to_check = raw_files_to_upload
-    
+
     # Upload each file if it exists
     for file_path in files_to_check:
         if os.path.exists(file_path):
@@ -162,48 +194,73 @@ def upload_files(video_id: str, specific_files: List[str] = None) -> List[Dict]:
             result = upload_file_to_gcs(file_path, video_id)
             if result:
                 uploaded_files.append(result)
-    
+
     # Log summary
     logger.info(f"Uploaded {len(uploaded_files)} raw files for video {video_id}")
-    
+
     return uploaded_files
 
 def upload_to_gcs(video_id, files):
     """
-    Upload only the 6 specific raw files to Google Cloud Storage:
+    Upload only the 7 specific raw files to Google Cloud Storage:
     1. Video file (.mp4)
     2. Audio file (.wav)
     3. Waveform file (.json)
     4. Transcript paragraphs file (.csv)
     5. Transcript words file (.csv)
-    6. Chat file (.csv)
+    6. Transcript segments file (.csv)
+    7. Chat file (.csv)
+
+    If GCS authentication fails, this function will log a warning and return an empty list
+    instead of raising an exception, allowing the pipeline to continue.
     """
     try:
         logger.info(f"Uploading raw files to GCS for {video_id}...")
-        
-        # Define the 6 specific files we want to upload
+
+        # Check if service account key file is properly configured
+        if GCP_SERVICE_ACCOUNT_PATH and os.path.exists(GCP_SERVICE_ACCOUNT_PATH):
+            try:
+                with open(GCP_SERVICE_ACCOUNT_PATH, 'r') as f:
+                    key_data = json.load(f)
+                    if key_data.get('private_key') == "REPLACE_WITH_ACTUAL_PRIVATE_KEY":
+                        logger.warning("Service account key file contains placeholder values.")
+                        logger.warning("Please update the key file with actual service account credentials.")
+                        logger.warning("See decision_docs/gcp_authentication.md for instructions.")
+                        logger.info("Skipping GCS upload due to invalid service account key.")
+                        return []
+            except Exception as e:
+                logger.warning(f"Error reading service account key file: {str(e)}")
+
+        # Define the 7 specific files we want to upload
         raw_files_to_upload = {
             "video_file": files.get("video_file"),
             "audio_file": files.get("audio_file"),
             "waveform_file": files.get("waveform_file"),
             "paragraphs_file": files.get("paragraphs_file"),
             "words_file": files.get("words_file"),
+            "segments_file": files.get("segments_file"),
             "chat_file": files.get("chat_file")
         }
-        
+
         # Filter out any None values and convert to strings
         file_paths = [str(file) for file in raw_files_to_upload.values() if file is not None and isinstance(file, Path)]
-        
+
         # Upload files
         uploaded_files = upload_files(video_id, file_paths)
-        
-        # Verify we have exactly 6 files
-        if len(uploaded_files) != 6:
-            logger.warning(f"Expected to upload 6 files, but uploaded {len(uploaded_files)} files")
-            
+
+        # Verify we have exactly 7 files
+        if len(uploaded_files) != 7:
+            logger.warning(f"Expected to upload 7 files, but uploaded {len(uploaded_files)} files")
+
         logger.info(f"Successfully uploaded {len(uploaded_files)} raw files to GCS")
-        
+
         return uploaded_files
     except Exception as e:
-        logger.error(f"Error uploading files to GCS: {str(e)}")
-        raise
+        logger.warning(f"Error uploading files to GCS: {str(e)}")
+        logger.warning("Continuing without GCS upload.")
+        logger.warning("To fix this issue, either:")
+        logger.warning("1. Run: gcloud auth application-default login")
+        logger.warning("2. Or update the service account key file with valid credentials")
+        logger.warning("See decision_docs/gcp_authentication.md for detailed instructions")
+        # Return empty list instead of raising an exception
+        return []

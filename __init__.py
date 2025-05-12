@@ -11,7 +11,7 @@ It includes modules for:
 """
 
 from .audio_downloader import TwitchVideoDownloader
-from .audio_transcription import TranscriptionHandler
+from .backup.audio_transcription import TranscriptionHandler
 from .audio_sentiment import main as sentiment_analysis
 from .audio_waveform import process_audio_file
 from .audio_analysis import (

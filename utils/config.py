@@ -5,14 +5,25 @@ This module contains all configuration settings and constants for the Klipstream
 """
 
 import os
+import yaml
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load environment variables from .env file
 load_dotenv()
 
+# Load environment variables from .env.yaml file
+try:
+    if os.path.exists('.env.yaml'):
+        with open('.env.yaml', 'r') as f:
+            yaml_env = yaml.safe_load(f)
+            for key, value in yaml_env.items():
+                os.environ[key] = str(value)
+except Exception as e:
+    print(f"Error loading .env.yaml: {str(e)}")
+
 # Base directories
-OUTPUT_DIR = Path("Output")
+OUTPUT_DIR = Path("output")
 RAW_DIR = OUTPUT_DIR / "Raw"
 DOWNLOADS_DIR = Path("downloads")
 TEMP_DIR = DOWNLOADS_DIR / "temp"
@@ -35,9 +46,14 @@ ANALYSIS_CHAT_DIR = ANALYSIS_DIR / "Chat"
 VODS_BUCKET = "klipstream-vods-raw"
 TRANSCRIPTS_BUCKET = "klipstream-transcripts"
 CHATLOGS_BUCKET = "klipstream-chatlogs"
+ANALYSIS_BUCKET = "klipstream-analysis"
 
 # API Keys
 ASSEMBLYAI_API_KEY = os.getenv("ASSEMBLYAI_API_KEY")
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
+
+# GCP Service Account
+GCP_SERVICE_ACCOUNT_PATH = os.getenv("GCP_SERVICE_ACCOUNT_PATH")
 
 # Binary paths based on platform
 def get_binary_paths():
@@ -48,13 +64,13 @@ def get_binary_paths():
 
     if system == "Darwin":  # macOS
         return {
-            "twitch_downloader": "./TwitchDownloaderCLI_mac",
-            "ffmpeg": "./ffmpeg_mac"
+            "twitch_downloader": "./raw_pipeline/bin/TwitchDownloaderCLI_mac",
+            "ffmpeg": "./raw_pipeline/bin/ffmpeg_mac"
         }
     elif system == "Windows":
         return {
-            "twitch_downloader": "./TwitchDownloaderCLI.exe",
-            "ffmpeg": "./ffmpeg.exe"
+            "twitch_downloader": "./raw_pipeline/bin/TwitchDownloaderCLI.exe",
+            "ffmpeg": "./raw_pipeline/bin/ffmpeg.exe"
         }
     else:  # Linux (Cloud Functions uses Linux)
         # Check if we're in a container environment (like Cloud Functions)
@@ -65,8 +81,8 @@ def get_binary_paths():
             }
         else:
             return {
-                "twitch_downloader": "./TwitchDownloaderCLI",
-                "ffmpeg": "./ffmpeg"
+                "twitch_downloader": "./raw_pipeline/bin/TwitchDownloaderCLI",
+                "ffmpeg": "./raw_pipeline/bin/ffmpeg"
             }
 
 # Get binary paths

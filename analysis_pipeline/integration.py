@@ -6,11 +6,17 @@ a comprehensive analysis that leverages both audience reactions and streamer con
 """
 
 import os
+import json
 import pandas as pd
 import numpy as np
 import logging
 import matplotlib.pyplot as plt
-from datetime import datetime
+from google.cloud import storage
+from google.api_core.exceptions import GoogleAPIError
+from google.oauth2 import service_account
+from pathlib import Path
+
+from utils.config import ANALYSIS_BUCKET, GCP_SERVICE_ACCOUNT_PATH
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -709,7 +715,7 @@ def plot_all_emotions(integrated_df, output_dir, video_id, smooth=True, window_s
 
 def create_emotion_summary(integrated_df, emotions, output_dir, video_id, smooth=True, window_size=15):
     """
-    Create a summary plot with emotion comparisons, audio waveform, speech rate, and chat message count
+    Create a summary plot with emotion comparisons, audio loudness, speech rate, chat message count, and sentiment analysis
 
     Args:
         integrated_df (DataFrame): Integrated analysis dataframe
@@ -724,7 +730,7 @@ def create_emotion_summary(integrated_df, emotions, output_dir, video_id, smooth
 
     # Calculate rows and columns for subplot grid
     n_emotions = len(emotions)
-    n_technical = 3  # Audio waveform, speech rate, chat message count
+    n_technical = 5  # Audio loudness, sentiment analysis, highlight score, speech rate, chat message count
     n_total = n_emotions + n_technical
     n_cols = 2
     n_rows = (n_total + n_cols - 1) // n_cols  # Ceiling division
@@ -779,27 +785,126 @@ def create_emotion_summary(integrated_df, emotions, output_dir, video_id, smooth
         # Format x-axis as minutes:seconds
         ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x//60)}:{int(x%60):02d}'))
 
-    # Plot audio waveform
-    ax_waveform = axes[n_emotions]
+    # Plot audio loudness
+    ax_loudness = axes[n_emotions]
     audio_file_path = f"Output/Raw/Audio/audio_{video_id}.wav"
-    waveform_times, waveform_amplitudes = extract_audio_waveform(audio_file_path)
+    waveform_times, waveform_amplitudes = extract_audio_waveform(audio_file_path, num_points=2000)
 
     if len(waveform_times) > 0 and len(waveform_amplitudes) > 0:
-        ax_waveform.plot(waveform_times, waveform_amplitudes, 'g-', linewidth=0.8)
-        ax_waveform.set_title('Audio Waveform')
-        ax_waveform.set_xlabel('Time (min:sec)')
-        ax_waveform.set_ylabel('Amplitude')
-        ax_waveform.grid(True)
-        ax_waveform.set_ylim(-1.05, 1.05)
-        ax_waveform.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x//60)}:{int(x%60):02d}'))
+        # Convert to absolute values to get loudness
+        loudness = np.abs(waveform_amplitudes)
+
+        # Apply smoothing with rolling window
+        window_size_loudness = 50  # Adjust based on desired smoothness
+        if len(loudness) > window_size_loudness:
+            # Use pandas rolling window for smoothing
+            loudness_series = pd.Series(loudness)
+            smoothed_loudness = loudness_series.rolling(window=window_size_loudness, center=True).mean()
+            # Fill NaN values at the edges
+            smoothed_loudness = smoothed_loudness.bfill().ffill()
+        else:
+            smoothed_loudness = loudness
+
+        # Plot the raw loudness as a light fill
+        ax_loudness.fill_between(waveform_times, 0, loudness, alpha=0.3, color='lightblue', label='Raw Loudness')
+
+        # Plot the smoothed loudness as a solid line
+        ax_loudness.plot(waveform_times, smoothed_loudness, 'b-', linewidth=1.5, label='Smoothed Loudness')
+
+        # Calculate and plot the average loudness
+        avg_loudness = np.mean(loudness)
+        ax_loudness.axhline(y=avg_loudness, color='r', linestyle='--',
+                    label=f'Avg: {avg_loudness:.2f}')
+
+        ax_loudness.set_title('Audio Loudness')
+        ax_loudness.set_xlabel('Time (min:sec)')
+        ax_loudness.set_ylabel('Loudness')
+        ax_loudness.legend(loc='upper right', fontsize='small')
+        ax_loudness.grid(True)
+        ax_loudness.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x//60)}:{int(x%60):02d}'))
     else:
-        ax_waveform.text(0.5, 0.5, 'Audio waveform not available',
+        ax_loudness.text(0.5, 0.5, 'Audio loudness data not available',
                          horizontalalignment='center', verticalalignment='center')
-        ax_waveform.set_title('Audio Waveform')
+        ax_loudness.set_title('Audio Loudness')
+
+    # Plot sentiment analysis
+    ax_sentiment = axes[n_emotions + 1]
+    if 'sentiment_score' in integrated_df.columns and 'fused_sentiment' in integrated_df.columns:
+        x = integrated_df['start_time'].values
+        audio_sentiment = integrated_df['sentiment_score'].values
+        chat_sentiment = integrated_df['chat_sentiment'].values if 'chat_sentiment' in integrated_df.columns else np.zeros_like(audio_sentiment)
+        fused_sentiment = integrated_df['fused_sentiment'].values
+
+        if smooth:
+            # Apply smoothing
+            _, audio_sentiment = apply_smoothing(x, audio_sentiment, window_size, 'savgol')
+            _, chat_sentiment = apply_smoothing(x, chat_sentiment, window_size, 'savgol')
+            _, fused_sentiment = apply_smoothing(x, fused_sentiment, window_size, 'savgol')
+
+        # Plot sentiment scores
+        ax_sentiment.plot(x, audio_sentiment, 'b-', label='Streamer', linewidth=1.5)
+        ax_sentiment.plot(x, chat_sentiment, 'g-', label='Audience', linewidth=1.5)
+        ax_sentiment.plot(x, fused_sentiment, 'r-', label='Fused', linewidth=2)
+
+        # Add a horizontal line at zero
+        ax_sentiment.axhline(y=0, color='k', linestyle='-', alpha=0.2)
+
+        ax_sentiment.set_title('Sentiment Analysis')
+        ax_sentiment.set_xlabel('Time (min:sec)')
+        ax_sentiment.set_ylabel('Sentiment (-1 to 1)')
+        ax_sentiment.legend(loc='upper right', fontsize='small')
+        ax_sentiment.grid(True)
+        ax_sentiment.set_ylim(-1.05, 1.05)
+        ax_sentiment.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x//60)}:{int(x%60):02d}'))
+    else:
+        ax_sentiment.text(0.5, 0.5, 'Sentiment data not available',
+                         horizontalalignment='center', verticalalignment='center')
+        ax_sentiment.set_title('Sentiment Analysis')
+
+
+
+    # Plot highlight scores
+    ax_highlight = axes[n_emotions + 2]
+    if 'highlight_score' in integrated_df.columns and 'chat_highlight_score' in integrated_df.columns and 'enhanced_highlight_score' in integrated_df.columns:
+        x = integrated_df['start_time'].values
+        audio_highlight = integrated_df['highlight_score'].values
+        chat_highlight = integrated_df['chat_highlight_score'].values
+        enhanced_highlight = integrated_df['enhanced_highlight_score'].values
+
+        if smooth:
+            # Apply smoothing
+            _, audio_highlight = apply_smoothing(x, audio_highlight, window_size, 'savgol')
+            _, chat_highlight = apply_smoothing(x, chat_highlight, window_size, 'savgol')
+            _, enhanced_highlight = apply_smoothing(x, enhanced_highlight, window_size, 'savgol')
+
+        # Plot highlight scores
+        ax_highlight.plot(x, audio_highlight, 'b-', label='Audio', linewidth=1.5)
+        ax_highlight.plot(x, chat_highlight, 'g-', label='Chat', linewidth=1.5)
+        ax_highlight.plot(x, enhanced_highlight, 'r-', label='Enhanced', linewidth=2)
+
+        # Calculate threshold for "good" highlights (e.g., top 15% of scores)
+        highlight_threshold = np.percentile(enhanced_highlight, 85)
+
+        # Mark the threshold line
+        ax_highlight.axhline(y=highlight_threshold, color='gray', linestyle='--',
+                           label=f'Threshold (85th)')
+
+        ax_highlight.set_title('Highlight Scores')
+        ax_highlight.set_xlabel('Time (min:sec)')
+        ax_highlight.set_ylabel('Score')
+        ax_highlight.legend(loc='upper right', fontsize='small')
+        ax_highlight.grid(True)
+        ax_highlight.set_ylim(-0.05, 1.05)
+        ax_highlight.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x//60)}:{int(x%60):02d}'))
+    else:
+        ax_highlight.text(0.5, 0.5, 'Highlight score data not available',
+                         horizontalalignment='center', verticalalignment='center')
+        ax_highlight.set_title('Highlight Scores')
 
     # Plot speech rate
-    ax_speech_rate = axes[n_emotions + 1]
+    ax_speech_rate = axes[n_emotions + 3]
     if 'speech_rate' in integrated_df.columns:
+        x = integrated_df['start_time'].values
         speech_rate = integrated_df['speech_rate'].values
         if smooth:
             _, speech_rate = apply_smoothing(x, speech_rate, window_size, 'savgol')
@@ -822,7 +927,7 @@ def create_emotion_summary(integrated_df, emotions, output_dir, video_id, smooth
         ax_speech_rate.set_title('Speech Rate')
 
     # Plot chat message count
-    ax_chat_count = axes[n_emotions + 2]
+    ax_chat_count = axes[n_emotions + 4]
     if 'chat_volume' in integrated_df.columns:
         message_count = integrated_df['chat_volume'].values
         if smooth:
@@ -1050,7 +1155,7 @@ def create_editors_highlight_view(integrated_df, output_dir, video_id, num_highl
     logger.info(f"Editor's highlight view saved to {plot_path}")
 
     # Create a CSV file with detailed highlight information for editors
-    create_editors_highlight_csv(integrated_df, top_highlights, editor_dir, video_id)
+    create_editors_highlight_csv(top_highlights, editor_dir, video_id)
 
     # Create an interactive HTML version
     create_interactive_editor_view(integrated_df, top_highlights, editor_dir, video_id)
@@ -1105,9 +1210,10 @@ def extract_audio_waveform(audio_file_path, num_points=1000):
     Returns:
         tuple: (times, amplitudes) arrays for plotting
     """
+    import numpy as np
+
     try:
         import librosa
-        import numpy as np
 
         # Load audio file
         logger.info(f"Loading audio file for waveform extraction: {audio_file_path}")
@@ -1118,9 +1224,6 @@ def extract_audio_waveform(audio_file_path, num_points=1000):
 
         # Resample to desired number of points
         if len(y) > num_points:
-            # Calculate points per second
-            points_per_second = num_points / duration
-
             # Create time array
             times = np.linspace(0, duration, num_points)
 
@@ -1145,10 +1248,15 @@ def extract_audio_waveform(audio_file_path, num_points=1000):
 
     except ImportError:
         logger.warning("librosa not installed. Cannot extract audio waveform.")
-        return np.array([]), np.array([])
+        # Create a simple sine wave as a placeholder
+        times = np.linspace(0, 60, num_points)  # 1 minute of audio
+        amplitudes = np.zeros(num_points)  # Flat line
+        return times, amplitudes
     except Exception as e:
         logger.error(f"Error extracting audio waveform: {str(e)}")
-        return np.array([]), np.array([])
+        times = np.linspace(0, 60, num_points)  # 1 minute of audio
+        amplitudes = np.zeros(num_points)  # Flat line
+        return times, amplitudes
 
 def create_interactive_editor_view(integrated_df, top_highlights, output_dir, video_id):
     """
@@ -1162,7 +1270,6 @@ def create_interactive_editor_view(integrated_df, top_highlights, output_dir, vi
     """
     try:
         import plotly.graph_objects as go
-        import plotly.express as px
         from plotly.subplots import make_subplots
 
         logger.info("Generating interactive editor's view")
@@ -1178,8 +1285,25 @@ def create_interactive_editor_view(integrated_df, top_highlights, output_dir, vi
         # Calculate threshold for "good" highlights (e.g., top 15% of scores)
         highlight_threshold = np.percentile(smoothed_scores, 85)
 
-        # Extract audio waveform
-        audio_file_path = f"Output/Raw/Audio/audio_{video_id}.wav"
+        # Extract audio waveform - try multiple possible paths
+        possible_audio_paths = [
+            f"Output/Raw/audio/audio_{video_id}.wav",  # lowercase 'audio'
+            f"Output/Raw/Audio/audio_{video_id}.wav",  # uppercase 'Audio'
+            f"Output/Raw/audio_{video_id}.wav",        # directly in Raw
+            f"Output/Raw/audio_{video_id}.mp3"         # mp3 format
+        ]
+
+        audio_file_path = None
+        for path in possible_audio_paths:
+            if os.path.exists(path):
+                audio_file_path = path
+                logger.info(f"Found audio file for waveform extraction at: {audio_file_path}")
+                break
+
+        if audio_file_path is None:
+            logger.warning(f"Audio file not found in any of the expected locations for waveform extraction")
+            audio_file_path = possible_audio_paths[0]  # Use the first path as default even if it doesn't exist
+
         waveform_times, waveform_amplitudes = extract_audio_waveform(audio_file_path)
 
         # Create figure with subplots - one for highlight score, one for waveform
@@ -1642,12 +1766,11 @@ def create_interactive_editor_view(integrated_df, top_highlights, output_dir, vi
         logger.warning("Plotly not installed. Skipping interactive editor view.")
         return None
 
-def create_editors_highlight_csv(integrated_df, top_highlights, output_dir, video_id):
+def create_editors_highlight_csv(top_highlights, output_dir, video_id):
     """
     Create a CSV file with detailed highlight information for video editors
 
     Args:
-        integrated_df (DataFrame): Integrated analysis dataframe
         top_highlights (DataFrame): Top highlights dataframe
         output_dir (str): Directory to save the CSV
         video_id (str): Video ID for filename
@@ -1729,11 +1852,14 @@ def create_editors_highlight_csv(integrated_df, top_highlights, output_dir, vide
 
     editors_df['streamer_emotion_intensity'] = [get_streamer_emotion_intensity(i) for i in range(len(top_highlights))]
 
+    # Move content column to the end for better readability
+    content_column = editors_df.pop('content')
+    editors_df['content'] = content_column
+
     # Save to CSV
     csv_path = os.path.join(output_dir, f"{video_id}_editors_highlights.csv")
     editors_df.to_csv(csv_path, index=False)
-
-    logger.info(f"Editor's highlight CSV saved to {csv_path}")
+    logger.info(f"Editor's highlight CSV saved to {csv_path} with columns rearranged for better readability")
     return csv_path
 
 def run_integration(video_id):
@@ -1749,9 +1875,9 @@ def run_integration(video_id):
     logger.info(f"Starting integration for video ID: {video_id}")
 
     # Define input and output paths
-    audio_sentiment_path = f"Output/Analysis/Audio/audio_{video_id}_sentiment.csv"
-    chat_analysis_path = f"Output/Analysis/Chat/{video_id}_highlight_analysis.csv"
-    output_dir = "Output/Analysis/Integrated"
+    audio_sentiment_path = f"output/Analysis/Audio/audio_{video_id}_sentiment.csv"
+    chat_analysis_path = f"output/Analysis/Chat/{video_id}_highlight_analysis.csv"
+    output_dir = "output/Analysis/Integrated"
     integrated_output_path = f"{output_dir}/{video_id}_integrated_analysis.csv"
 
     # Ensure output directory exists
@@ -1789,6 +1915,24 @@ def run_integration(video_id):
 
     # Save integrated analysis
     logger.info(f"Saving integrated analysis to {integrated_output_path}")
+
+    # Rearrange columns to have start_time and end_time first, scores in the middle, and text at the end
+    columns = list(integrated_df.columns)
+
+    # Define the desired column order
+    time_columns = ['start_time', 'end_time']
+    text_columns = ['text']
+
+    # Get all other columns (scores, metrics, etc.)
+    score_columns = [col for col in columns if col not in time_columns + text_columns]
+
+    # Create the new column order
+    new_column_order = time_columns + score_columns + text_columns
+
+    # Reorder the columns
+    integrated_df = integrated_df[new_column_order]
+
+    logger.info(f"Columns rearranged for better readability")
     integrated_df.to_csv(integrated_output_path, index=False)
 
     # Generate selected visualizations
@@ -1796,14 +1940,34 @@ def run_integration(video_id):
     create_emotion_summary(integrated_df, ['excitement', 'funny', 'happiness', 'anger', 'sadness'],
                           output_dir, video_id, smooth=True, window_size=15)
 
+    # Generate dedicated loudness visualization
+    create_loudness_visualization(video_id, output_dir)
+
     # Create editor-focused visualizations
     create_editors_highlight_view(integrated_df, output_dir, video_id)
 
     # Extract top highlights
     top_highlights = integrated_df.nlargest(10, 'enhanced_highlight_score')
+
+    # Rearrange columns to have start_time and end_time first, scores in the middle, and text at the end
+    columns = list(top_highlights.columns)
+
+    # Define the desired column order
+    time_columns = ['start_time', 'end_time']
+    text_columns = ['text']
+
+    # Get all other columns (scores, metrics, etc.)
+    score_columns = [col for col in columns if col not in time_columns + text_columns]
+
+    # Create the new column order
+    new_column_order = time_columns + score_columns + text_columns
+
+    # Reorder the columns
+    top_highlights = top_highlights[new_column_order]
+
     top_highlights_path = f"{output_dir}/{video_id}_top_highlights.csv"
     top_highlights.to_csv(top_highlights_path, index=False)
-    logger.info(f"Top 10 highlights saved to {top_highlights_path}")
+    logger.info(f"Top 10 highlights saved to {top_highlights_path} with columns rearranged for better readability")
 
     # Remove temporary files
     audio_dir = os.path.dirname(audio_sentiment_path)
@@ -1850,5 +2014,288 @@ def run_integration(video_id):
             except Exception as e:
                 logger.warning(f"Failed to remove temporary file {file_path}: {str(e)}")
 
+    # Upload integrated analysis file to GCS
+    try:
+        upload_result = upload_integrated_analysis_to_gcs(video_id, integrated_output_path)
+        if upload_result:
+            logger.info(f"Successfully uploaded integrated analysis to GCS bucket: {ANALYSIS_BUCKET}")
+        else:
+            logger.warning("Failed to upload integrated analysis to GCS. See logs for details.")
+    except Exception as e:
+        logger.error(f"Error uploading integrated analysis to GCS: {str(e)}")
+        logger.warning("To fix GCS authentication issues, run: gcloud auth application-default login")
+        # Continue even if upload fails
+
     logger.info("Integration completed successfully")
     return True
+
+def upload_integrated_analysis_to_gcs(video_id, file_path):
+    """
+    Upload integrated analysis file to Google Cloud Storage
+
+    Args:
+        video_id (str): The video ID
+        file_path (str): Path to the integrated analysis file
+
+    Returns:
+        dict: Information about the uploaded file or None if upload failed
+    """
+    try:
+        logger.info(f"Uploading integrated analysis file to GCS bucket: {ANALYSIS_BUCKET}")
+
+        # Check if file exists
+        if not os.path.exists(file_path):
+            logger.error(f"File not found: {file_path}")
+            return None
+
+        # Initialize GCS client
+        try:
+            # Try to use the new service account credentials first (same as raw pipeline)
+            new_key_path = "./new-service-account-key.json"
+            if os.path.exists(new_key_path):
+                try:
+                    logger.info(f"Using service account credentials from {new_key_path}")
+                    # Load the service account key file to verify its contents
+                    with open(new_key_path, 'r') as f:
+                        key_data = json.load(f)
+                        logger.info(f"Service account email: {key_data.get('client_email', 'Not found')}")
+                        logger.info(f"Project ID: {key_data.get('project_id', 'Not found')}")
+
+                    credentials = service_account.Credentials.from_service_account_file(
+                        new_key_path,
+                        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+                    )
+                    client = storage.Client(credentials=credentials, project=key_data.get('project_id'))
+                except Exception as e:
+                    logger.warning(f"Failed to use new service account credentials: {str(e)}")
+                    logger.warning(f"Exception type: {type(e).__name__}")
+                    # Fall back to GCP_SERVICE_ACCOUNT_PATH
+                    if GCP_SERVICE_ACCOUNT_PATH and os.path.exists(GCP_SERVICE_ACCOUNT_PATH):
+                        logger.info(f"Falling back to GCP_SERVICE_ACCOUNT_PATH: {GCP_SERVICE_ACCOUNT_PATH}")
+                        credentials = service_account.Credentials.from_service_account_file(GCP_SERVICE_ACCOUNT_PATH)
+                        client = storage.Client(credentials=credentials)
+                    else:
+                        logger.info("Falling back to application default credentials")
+                        client = storage.Client()
+            elif GCP_SERVICE_ACCOUNT_PATH and os.path.exists(GCP_SERVICE_ACCOUNT_PATH):
+                # Use service account credentials if available
+                logger.info(f"Using service account credentials from {GCP_SERVICE_ACCOUNT_PATH}")
+                credentials = service_account.Credentials.from_service_account_file(GCP_SERVICE_ACCOUNT_PATH)
+                client = storage.Client(credentials=credentials)
+            else:
+                # Use application default credentials
+                logger.info("Using application default credentials")
+                client = storage.Client()
+        except Exception as e:
+            logger.warning(f"Error initializing GCS client with credentials: {str(e)}")
+            logger.info("Falling back to application default credentials")
+            try:
+                client = storage.Client()
+            except Exception as auth_error:
+                logger.error(f"Authentication error: {str(auth_error)}")
+                logger.warning("To fix GCS authentication issues, run: gcloud auth application-default login")
+                return None
+
+        # Get bucket
+        try:
+            bucket = client.bucket(ANALYSIS_BUCKET)
+
+            # Determine destination path in GCS
+            blob_name = f"{video_id}/{Path(file_path).name}"
+            blob = bucket.blob(blob_name)
+
+            # Upload file
+            logger.info(f"Uploading {file_path} to gs://{ANALYSIS_BUCKET}/{blob_name}")
+            blob.upload_from_filename(file_path)
+
+            # Generate a GCS URI for the uploaded file
+            gcs_uri = f"gs://{ANALYSIS_BUCKET}/{blob_name}"
+
+            logger.info(f"Successfully uploaded integrated analysis to {gcs_uri}")
+
+            # Return information about the uploaded file
+            return {
+                "file_path": str(file_path),
+                "bucket": ANALYSIS_BUCKET,
+                "blob_name": blob_name,
+                "gcs_uri": gcs_uri
+            }
+        except GoogleAPIError as bucket_error:
+            if "Permission denied" in str(bucket_error) or "Forbidden" in str(bucket_error):
+                logger.error(f"Permission denied accessing bucket {ANALYSIS_BUCKET}. Check your permissions.")
+                logger.warning("To fix GCS authentication issues, run: gcloud auth application-default login")
+            elif "Not Found" in str(bucket_error):
+                logger.error(f"Bucket {ANALYSIS_BUCKET} not found. Check if it exists.")
+            else:
+                logger.error(f"Google API error: {str(bucket_error)}")
+            return None
+
+    except GoogleAPIError as e:
+        if "Reauthentication is needed" in str(e):
+            logger.error("Google Cloud authentication expired.")
+            logger.warning("To fix GCS authentication issues, run: gcloud auth application-default login")
+        else:
+            logger.error(f"Google API error uploading {file_path}: {str(e)}")
+        return None
+    except Exception as e:
+        logger.error(f"Error uploading {file_path}: {str(e)}")
+        return None
+
+def create_loudness_visualization(video_id, output_dir):
+    """
+    Create a visualization focused solely on audio loudness over time.
+
+    Args:
+        video_id (str): The ID of the video to process
+        output_dir (str): Directory to save the visualization
+
+    Returns:
+        str: Path to the saved visualization
+    """
+    logger.info(f"Generating loudness visualization for {video_id}")
+
+    # Create figure
+    plt.figure(figsize=(15, 6))
+
+    # Extract audio waveform - try multiple possible paths
+    possible_audio_paths = [
+        f"output/Raw/audio/audio_{video_id}.wav",  # lowercase 'audio'
+        f"output/Raw/Audio/audio_{video_id}.wav",  # uppercase 'Audio'
+        f"output/Raw/audio_{video_id}.wav",        # directly in Raw
+        f"output/Raw/audio_{video_id}.mp3"         # mp3 format
+    ]
+
+    audio_file_path = None
+    for path in possible_audio_paths:
+        if os.path.exists(path):
+            audio_file_path = path
+            logger.info(f"Found audio file for loudness visualization at: {audio_file_path}")
+            break
+
+    if audio_file_path is None:
+        logger.warning(f"Audio file not found in any of the expected locations for loudness visualization")
+        audio_file_path = possible_audio_paths[0]  # Use the first path as default even if it doesn't exist
+
+    waveform_times, waveform_amplitudes = extract_audio_waveform(audio_file_path, num_points=2000)
+
+    if len(waveform_times) == 0 or len(waveform_amplitudes) == 0:
+        logger.error(f"Could not extract waveform data from {audio_file_path}")
+        plt.text(0.5, 0.5, 'Audio waveform not available',
+                horizontalalignment='center', verticalalignment='center')
+        plt.title('Audio Loudness')
+
+        # Save empty plot
+        plot_path = os.path.join(output_dir, f"{video_id}_loudness.png")
+        plt.savefig(plot_path, dpi=150)
+        plt.close()
+        return plot_path
+
+    # Convert to absolute values to get loudness
+    loudness = np.abs(waveform_amplitudes)
+
+    # Apply smoothing with rolling window
+    window_size = 50  # Adjust based on desired smoothness
+    if len(loudness) > window_size:
+        # Use pandas rolling window for smoothing
+        loudness_series = pd.Series(loudness)
+        smoothed_loudness = loudness_series.rolling(window=window_size, center=True).mean()
+        # Fill NaN values at the edges using newer methods
+        smoothed_loudness = smoothed_loudness.bfill().ffill()
+    else:
+        smoothed_loudness = loudness
+
+    # Plot the raw loudness as a light fill
+    plt.fill_between(waveform_times, 0, loudness, alpha=0.3, color='lightblue', label='Raw Loudness')
+
+    # Plot the smoothed loudness as a solid line
+    plt.plot(waveform_times, smoothed_loudness, 'b-', linewidth=2, label='Smoothed Loudness')
+
+    # Calculate and plot the average loudness
+    avg_loudness = np.mean(loudness)
+    plt.axhline(y=avg_loudness, color='r', linestyle='--',
+                label=f'Average Loudness: {avg_loudness:.2f}')
+
+    # Add markers for high loudness points (e.g., top 5%)
+    threshold = np.percentile(loudness, 95)
+    high_points = np.where(smoothed_loudness > threshold)[0]
+
+    # Group adjacent high points into segments
+    segments = []
+    if len(high_points) > 0:
+        segment_start = high_points[0]
+        for i in range(1, len(high_points)):
+            if high_points[i] - high_points[i-1] > 5:  # Gap of more than 5 points
+                segments.append((segment_start, high_points[i-1]))
+                segment_start = high_points[i]
+        segments.append((segment_start, high_points[-1]))  # Add the last segment
+
+    # Mark high loudness segments
+    for start, end in segments:
+        mid_point = (start + end) // 2
+        mid_time = waveform_times[mid_point]
+        mid_loudness = smoothed_loudness[mid_point]
+
+        # Format timestamp as MM:SS
+        minutes = int(mid_time // 60)
+        seconds = int(mid_time % 60)
+        timestamp = f"{minutes:02d}:{seconds:02d}"
+
+        # Add vertical span for the segment
+        plt.axvspan(waveform_times[start], waveform_times[end],
+                   alpha=0.2, color='red', label='_nolegend_')
+
+        # Add annotation with timestamp
+        plt.annotate(timestamp,
+                    xy=(mid_time, mid_loudness),
+                    xytext=(0, 15),
+                    textcoords='offset points',
+                    ha='center',
+                    arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0'),
+                    bbox=dict(boxstyle='round,pad=0.3', fc='white', alpha=0.7))
+
+    # Add stream timeline markers (every 5 minutes)
+    max_time = waveform_times[-1]
+    for minute in range(0, int(max_time/60) + 1, 5):
+        time_sec = minute * 60
+        if time_sec <= max_time:
+            plt.axvline(x=time_sec, color='gray', linestyle=':', alpha=0.5)
+            plt.text(time_sec, -0.05, f"{minute:02d}:00",
+                    ha='center', va='top', fontsize=9, alpha=0.7)
+
+    # Set title and labels
+    plt.title(f'Audio Loudness Over Time - {video_id}', fontsize=16)
+    plt.xlabel('Stream Time (minutes:seconds)', fontsize=12)
+    plt.ylabel('Loudness (Absolute Amplitude)', fontsize=12)
+
+    # Format x-axis as minutes:seconds
+    plt.gca().xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x//60):02d}:{int(x%60):02d}'))
+
+    # Add legend
+    handles, labels = plt.gca().get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    plt.legend(by_label.values(), by_label.keys(), loc='upper right')
+
+    # Add grid for easier reading
+    plt.grid(True, alpha=0.3)
+
+    # Add text box with explanation
+    explanation_text = (
+        "Loudness Visualization Guide:\n"
+        "• Blue area shows raw audio loudness\n"
+        "• Blue line shows smoothed loudness\n"
+        "• Red dashed line shows average loudness\n"
+        "• Red highlighted areas mark loudness peaks\n"
+        "• Timestamps indicate peak loudness moments"
+    )
+    plt.figtext(0.02, 0.02, explanation_text, fontsize=10,
+               bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+
+    plt.tight_layout()
+
+    # Save the plot
+    plot_path = os.path.join(output_dir, f"{video_id}_loudness.png")
+    plt.savefig(plot_path, dpi=150)  # Higher DPI for better quality
+    plt.close()
+
+    logger.info(f"Loudness visualization saved to {plot_path}")
+    return plot_path

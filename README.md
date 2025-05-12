@@ -1,79 +1,162 @@
-# KlipStream Analysis
+# Twitch Analysis Cloud Run Service
 
-A comprehensive pipeline for analyzing Twitch VODs, extracting insights from audio, transcripts, and chat data.
-
-## Overview
-
-KlipStream Analysis is a tool that processes Twitch VODs to extract valuable insights through various analysis techniques:
-
-- Audio transcription and sentiment analysis
-- Chat log analysis and sentiment detection
-- Highlight detection and extraction
-- Metadata processing and organization
-
-The pipeline can be run as a Cloud Function or locally, with results stored in Convex or Google Cloud Storage.
+This Google Cloud Run service analyzes Twitch VODs and uploads the results to Convex. It's designed to work with the KlipStream frontend project.
 
 ## Features
 
-- Download and process Twitch VODs
-- Transcribe audio content
-- Analyze sentiment in both audio transcripts and chat logs
-- Detect highlights and key moments
-- Process and organize chat data
-- Upload results to cloud storage
+- Downloads Twitch VODs using TwitchDownloaderCLI
+- Extracts audio and converts it to WAV format
+- Transcribes the audio using AssemblyAI
+- Performs sentiment analysis on the transcription
+- Analyzes chat data and sentiment
+- Identifies highlights and emotional patterns
+- Enhanced analysis using Hugging Face models for improved sentiment and emotion detection
+- Multiple processing methods for transcript analysis (batch, parallel, optimized)
+- Generates visualizations for sentiment and emotion analysis
+- Uploads all results to Google Cloud Storage buckets with proper folder structure:
+  - `klipstream-vods-raw`: For video, audio, and waveform files (organized in folders by VOD ID)
+  - `klipstream-transcripts`: For transcript paragraph and word files (organized in folders by VOD ID)
+  - `klipstream-chatlogs`: For chat logs (organized in folders by VOD ID)
 
-## Getting Started
+## Integration with Frontend
 
-### Prerequisites
+This service is designed to work with the KlipStream frontend project. The workflow is:
 
-- Python 3.8+
-- FFmpeg
-- Google Cloud SDK (for cloud deployment)
+1. The frontend creates a video entry in the database when a user submits a Twitch VOD URL
+2. The frontend then calls this Cloud Run service with the Twitch VOD URL
+3. This service processes the video and uploads the results to Google Cloud Storage buckets
+4. The service updates the existing database record with GCS file URLs
 
-### Installation
+## Enhanced Transcript Analysis
 
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/klipstream-analysis.git
-cd klipstream-analysis
+The service now includes advanced transcript analysis using Hugging Face models for improved sentiment and emotion detection. This provides more detailed insights into the content of Twitch VODs.
+
+### Analysis Methods
+
+Three different processing methods are available for transcript analysis:
+
+1. **Batch Processing** (`run_batch_analysis.sh`): Processes transcript data sequentially with checkpointing for reliability
+2. **Parallel Processing** (`run_parallel_analysis.sh`): Uses multiple processes to analyze transcript data in parallel
+3. **Optimized Processing** (`run_optimized_analysis.sh`): Uses thread pooling for improved performance on I/O-bound operations
+
+### Hugging Face Models
+
+The analysis uses the following models from Hugging Face:
+
+- **Sentiment Analysis**: [llmware/slim-sentiment-tool](https://huggingface.co/llmware/slim-sentiment-tool)
+- **Emotion Analysis**: [llmware/slim-emotions-tool](https://huggingface.co/llmware/slim-emotions-tool)
+
+### Visualizations
+
+The analysis generates several visualizations to help understand the content:
+
+1. **Sentiment Comparison**: A heatmap comparing the existing sentiment analysis with the Hugging Face sentiment analysis
+2. **Emotion Distribution**: A bar chart showing the distribution of emotions in the transcript
+3. **Sentiment Timeline**: A line chart showing sentiment over time
+4. **Emotion Timeline**: A multi-panel chart showing the occurrence of the top 5 emotions over time
+
+For more details, see [HUGGINGFACE_ANALYSIS_README.md](HUGGINGFACE_ANALYSIS_README.md).
+
+## Requirements
+
+- Google Cloud Project with Cloud Run enabled
+- Docker installed locally
+- Google Cloud SDK installed locally
+- AssemblyAI API key
+- Google API key (for sentiment analysis)
+- Convex account and project
+- Python 3.8+ with packages listed in `requirements.txt` and `huggingface_analysis_requirements.txt`
+
+## Setup
+
+### 1. Configure Environment Variables
+
+Update the `.env.yaml` file with your API keys:
+
+```yaml
+ASSEMBLYAI_API_KEY: "your_assemblyai_api_key_here"
+GOOGLE_API_KEY: "your_google_api_key_here"
+CONVEX_UPLOAD_URL: "your_convex_upload_endpoint_here"
 ```
 
-2. Install dependencies:
+### 2. Update the Existing Cloud Run Service
+
+Run the update script to update the existing "Chat-Audio-Analytics" service:
+
 ```bash
-pip install -r requirements.txt
+./update_cloud_run.sh
 ```
 
-3. Set up environment variables:
+For more detailed instructions, see [DEPLOYMENT.md](DEPLOYMENT.md).
+
+### 3. Manual Deployment (Alternative)
+
+If you prefer to deploy manually:
+
 ```bash
-cp .env.example .env
-# Edit .env with your configuration
+# Build the Docker image
+docker build -t gcr.io/optimum-habitat-429714-a7/Chat-Audio-Analytics .
+
+# Push the image to Google Container Registry
+docker push gcr.io/optimum-habitat-429714-a7/Chat-Audio-Analytics
+
+# Update the Cloud Run service
+gcloud run deploy Chat-Audio-Analytics \
+    --image gcr.io/optimum-habitat-429714-a7/Chat-Audio-Analytics \
+    --platform managed \
+    --region us-central1 \
+    --project optimum-habitat-429714-a7 \
+    --env-vars-file .env.yaml \
+    --allow-unauthenticated
 ```
 
-### Usage
+## Usage
 
-#### Local Execution
+Send a POST request to the Cloud Run service URL:
 
-To process a Twitch VOD locally:
+```json
+{
+  "url": "https://www.twitch.tv/videos/YOUR_VIDEO_ID"
+}
+```
+
+**Important**: The Twitch video must already exist in your database before calling this service.
+
+## Testing
+
+To test locally:
 
 ```bash
+# Install the Functions Framework
+pip install functions-framework
+
+# Run the function locally
+functions-framework --target=run_pipeline --debug
+
+# In another terminal, use the test script
+python test_cloud_function.py
+```
+
+For a clean run of the pipeline (recommended):
+
+```bash
+# Clean up directories and run the pipeline
+./run_pipeline.sh https://www.twitch.tv/videos/YOUR_VIDEO_ID
+
+# Or run the cleanup script separately
+python cleanup.py
 python main.py https://www.twitch.tv/videos/YOUR_VIDEO_ID
 ```
 
-#### Cloud Function Deployment
+To test the GCS upload functionality specifically:
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for instructions on deploying as a Cloud Function.
+```bash
+# Test uploading files to GCS
+python test_gcs_upload.py --video-id YOUR_VIDEO_ID --test-upload
 
-## Project Structure
+# Test uploading specific files (video, audio, and waveform)
+python test_gcs_upload.py --video-id YOUR_VIDEO_ID --test-specific
 
-- `main.py`: Main entry point for the pipeline
-- `raw_pipeline/`: Modules for initial VOD processing
-- `audio_analysis.py`: Audio analysis functions
-- `audio_sentiment.py`: Audio sentiment analysis
-- `chat_processor.py`: Chat data processing
-- `chat_sentiment.py`: Chat sentiment analysis
-- `chat_analysis.py`: Chat analysis functions
-- `utils/`: Utility functions and helpers
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+# Test updating video status
+python test_gcs_upload.py --video-id YOUR_VIDEO_ID --test-status
+```

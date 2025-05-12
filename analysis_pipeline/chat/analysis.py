@@ -187,7 +187,7 @@ def get_input_files(video_id, output_dir):
     """
     output_dir = Path(output_dir)
     sentiment_csv = output_dir / f"{video_id}_chat_sentiment.csv"
-    segments_csv = Path(f'Output/Raw/Transcripts/audio_{video_id}_segments.csv')
+    segments_csv = Path(f'output/Raw/Transcripts/audio_{video_id}_segments.csv')
 
     # Verify files exist
     if not os.path.exists(sentiment_csv):
@@ -230,7 +230,7 @@ def analyze_chat_highlights(video_id, output_dir=None):
     try:
         # Define output directory
         if output_dir is None:
-            output_dir = Path('Output/Analysis/Chat')
+            output_dir = Path('output/Analysis/Chat')
         else:
             output_dir = Path(output_dir)
 

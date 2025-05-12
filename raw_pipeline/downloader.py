@@ -11,6 +11,7 @@ import asyncio
 import json
 import re
 import shutil
+import time
 from pathlib import Path
 import subprocess
 from tqdm import tqdm
@@ -190,6 +191,11 @@ class TwitchVideoDownloader:
         # Define output path
         video_file = RAW_VIDEOS_DIR / f"{video_id}.mp4"
 
+        # Check if the file already exists
+        if video_file.exists():
+            logger.info(f"Video file already exists: {video_file}")
+            return video_file
+
         # Create command
         command = [
             BINARY_PATHS["twitch_downloader"],
@@ -213,6 +219,13 @@ class TwitchVideoDownloader:
         logger.info(f"CLI file exists: {cli_file_exists}")
         logger.info(f"CLI file permissions: {cli_file_permissions}")
 
+        # Create progress bar
+        pbar = tqdm(total=100, desc=f"Downloading VOD {video_id}")
+
+        # Variables to track progress
+        last_update_time = time.time()
+        progress_detected = False
+
         # Run the command
         logger.info(f"Running command: {' '.join(command)}")
         process = await asyncio.create_subprocess_exec(
@@ -221,11 +234,104 @@ class TwitchVideoDownloader:
             stderr=asyncio.subprocess.PIPE
         )
 
-        stdout, stderr = await process.communicate()
+        # Process output to update progress bar
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                # Check if stderr has any data
+                err_line = await process.stderr.readline()
+                if not err_line:
+                    break
+                else:
+                    err_str = err_line.decode('utf-8', errors='replace').strip()
+                    logger.info(f"Process stderr: {err_str}")
+                    continue
 
-        if process.returncode != 0:
-            logger.error(f"Error downloading video: {stderr.decode()}")
-            raise RuntimeError(f"Error downloading video: {stderr.decode()}")
+            line_str = line.decode('utf-8', errors='replace').strip()
+
+            # Only log non-progress output to avoid duplicate logging
+            progress_line = False
+
+            # Look for progress information in the output
+            # Pattern 1: "Downloaded: 10.5%"
+            progress_match = re.search(r'Downloaded:\s+(\d+(?:\.\d+)?)%', line_str)
+            if progress_match:
+                progress = float(progress_match.group(1))
+                pbar.update(progress - pbar.n)
+                logger.info(f"Download progress: {progress}%")
+                progress_detected = True
+                progress_line = True
+                continue
+
+            # Pattern 2: "Downloading segment X/Y"
+            segment_match = re.search(r'Downloading segment (\d+)/(\d+)', line_str)
+            if segment_match:
+                current, total = map(int, segment_match.groups())
+                progress = min(100, (current / total) * 100)
+                pbar.update(progress - pbar.n)
+                logger.info(f"Download progress: {progress}% (segment {current}/{total})")
+                progress_detected = True
+                progress_line = True
+                continue
+
+            # Pattern 3: "Progress: X%"
+            progress_match2 = re.search(r'Progress:\s+(\d+(?:\.\d+)?)%', line_str)
+            if progress_match2:
+                progress = float(progress_match2.group(1))
+                pbar.update(progress - pbar.n)
+                logger.info(f"Download progress: {progress}%")
+                progress_detected = True
+                progress_line = True
+                continue
+
+            # Pattern 4: "X% complete"
+            progress_match3 = re.search(r'(\d+(?:\.\d+)?)%\s+complete', line_str)
+            if progress_match3:
+                progress = float(progress_match3.group(1))
+                pbar.update(progress - pbar.n)
+                logger.info(f"Download progress: {progress}%")
+                progress_detected = True
+                progress_line = True
+                continue
+
+            # Pattern 5: "Downloading: X%"
+            progress_match4 = re.search(r'Downloading:\s+(\d+(?:\.\d+)?)%', line_str)
+            if progress_match4:
+                progress = float(progress_match4.group(1))
+                pbar.update(progress - pbar.n)
+                logger.info(f"Download progress: {progress}%")
+                progress_detected = True
+                progress_line = True
+                continue
+
+            # Log non-progress output
+            if not progress_line:
+                logger.info(f"Process output: {line_str}")
+
+            # Fallback: If we haven't detected progress in the output but the process is still running,
+            # update the progress bar slightly every 5 seconds to show activity
+            current_time = time.time()
+            if not progress_detected and (current_time - last_update_time) > 5:
+                # Small increment (0.5%) to show activity
+                pbar.update(0.5)
+                last_update_time = current_time
+                logger.info("No progress information detected, showing activity indicator")
+
+            # Reset progress_detected flag after each line to ensure we detect if progress stops being reported
+            progress_detected = False
+
+        # Close the progress bar
+        pbar.close()
+
+        # Wait for process to complete and get return code
+        return_code = await process.wait()
+
+        if return_code != 0:
+            # If we have an error, try to get any remaining stderr content
+            stderr_data = await process.stderr.read()
+            stderr_str = stderr_data.decode('utf-8', errors='replace')
+            logger.error(f"Error downloading video: {stderr_str}")
+            raise RuntimeError(f"Error downloading video: {stderr_str}")
 
         # Clean up temporary directory
         if TEMP_DIR.exists():
@@ -248,6 +354,11 @@ class TwitchVideoDownloader:
         """
         # Define output path
         audio_file = RAW_AUDIO_DIR / f"audio_{video_id}.wav"
+
+        # Check if the file already exists
+        if audio_file.exists():
+            logger.info(f"Audio file already exists: {audio_file}")
+            return audio_file
 
         # Get video duration
         duration_cmd = [
@@ -299,7 +410,6 @@ class TwitchVideoDownloader:
                 break
 
             line_str = line.decode('utf-8', errors='replace')
-            logger.info(f"Process output: {line_str.strip()}")
 
             # Update progress bar based on time
             if "time=" in line_str and duration > 0:
@@ -309,20 +419,27 @@ class TwitchVideoDownloader:
                     current_time = h * 3600 + m * 60 + s
                     progress = min(100, (current_time / duration) * 100)
                     pbar.update(progress - pbar.n)
+                    # Log progress updates
+                    logger.info(f"Audio conversion progress: {progress:.2f}%")
+                else:
+                    # Log non-progress output
+                    logger.info(f"Process output: {line_str.strip()}")
+            else:
+                # Log non-progress output
+                logger.info(f"Process output: {line_str.strip()}")
 
         # Wait for process to complete
-        await process.wait()
+        return_code = await process.wait()
         pbar.close()
 
-        # Get process output
-        stdout, stderr = await process.communicate()
+        if return_code != 0:
+            # If we have an error, try to get any remaining stderr content
+            stderr_data = await process.stderr.read()
+            stderr_str = stderr_data.decode('utf-8', errors='replace')
+            logger.error(f"Error extracting audio: {stderr_str}")
+            raise RuntimeError(f"Error extracting audio: {stderr_str}")
 
-        # Log stderr
-        logger.info(f"Process stderr:\n{stderr.decode('utf-8', errors='replace')}")
-
-        if process.returncode != 0:
-            logger.error(f"Error extracting audio: {stderr.decode('utf-8', errors='replace')}")
-            raise RuntimeError(f"Error extracting audio: {stderr.decode('utf-8', errors='replace')}")
+        logger.info("Audio extraction completed successfully")
 
         return audio_file
 

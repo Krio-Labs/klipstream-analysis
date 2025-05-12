@@ -2,17 +2,12 @@
 import asyncio
 import sys
 import logging
+import traceback
 from raw_pipeline import process_raw_files
+from utils.logging_setup import setup_logger
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("logs/main.log"),
-        logging.StreamHandler()
-    ]
-)
+# Set up logger for this script only
+logger = setup_logger("raw_pipeline_runner", "main.log")
 
 async def main():
     if len(sys.argv) < 2:
@@ -22,9 +17,10 @@ async def main():
     url = sys.argv[1]
     try:
         result = await process_raw_files(url)
-        print(f"Pipeline completed successfully for video {result['video_id']}")
+        logger.info(f"Pipeline completed successfully for video {result['video_id']}")
     except Exception as e:
-        logging.error(f"Pipeline failed: {str(e)}")
+        logger.error(f"Pipeline failed: {str(e)}")
+        traceback.print_exc()
         raise
 
 if __name__ == "__main__":

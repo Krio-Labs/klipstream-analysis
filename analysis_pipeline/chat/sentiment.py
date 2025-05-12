@@ -31,9 +31,14 @@ emotion_clusters = {
 def load_models():
     """Load both emotion and highlight classifier models."""
     try:
-        with open('models/emotion_classifier_pipe_lr.pkl', 'rb') as f:
+        # Use relative path to models within the same package
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        emotion_model_path = os.path.join(current_dir, 'models', 'emotion_classifier_pipe_lr.pkl')
+        highlight_model_path = os.path.join(current_dir, 'models', 'highlight_classifier_pipe_lr.pkl')
+
+        with open(emotion_model_path, 'rb') as f:
             emotion_model = pickle.load(f)
-        with open('models/highlight_classifier_pipe_lr.pkl', 'rb') as f:
+        with open(highlight_model_path, 'rb') as f:
             highlight_model = pickle.load(f)
         return emotion_model, highlight_model
     except Exception as e:
@@ -112,7 +117,7 @@ def analyze_chat_sentiment(video_id, output_dir=None):
     try:
         # Define output directory
         if output_dir is None:
-            output_dir = Path('Output/Analysis/Chat')
+            output_dir = Path('output/Analysis/Chat')
         else:
             output_dir = Path(output_dir)
 
@@ -124,7 +129,7 @@ def analyze_chat_sentiment(video_id, output_dir=None):
         # Check if file exists
         if not os.path.exists(input_file):
             # Try to find the file in the raw directory
-            raw_input_file = Path(f'Output/Raw/Chat/{video_id}_chat.csv')
+            raw_input_file = Path(f'output/Raw/Chat/{video_id}_chat.csv')
             if os.path.exists(raw_input_file):
                 logger.info(f"Processed chat file not found, using raw chat file: {raw_input_file}")
                 input_file = raw_input_file

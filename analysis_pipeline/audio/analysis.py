@@ -38,18 +38,27 @@ def plot_metrics(output_dir, video_id):
         output_dir = Path(output_dir)
         os.makedirs(output_dir, exist_ok=True)
 
-        # Look for the CSV file in the output directory
-        file_path = output_dir / f"audio_{video_id}_sentiment.csv"
-        if not file_path.exists():
-            # Try in Raw directory
-            raw_file_path = Path(f'Output/Raw/Transcripts/audio_{video_id}_segments.csv')
-            if os.path.exists(raw_file_path):
-                file_path = raw_file_path
-                logger.info(f"Using segments file from Raw directory: {file_path}")
-            else:
-                raise FileNotFoundError(f"Could not find segments file in {file_path} or {raw_file_path}")
+        # First try to use the sentiment file from the output directory
+        sentiment_file = output_dir / f"audio_{video_id}_sentiment.csv"
+
+        # Also check for sentiment file in test_output directory (for testing)
+        test_sentiment_file = Path(f"test_output/audio_{video_id}_sentiment.csv")
+
+        # Then try the segments file as fallback
+        segments_file = Path(f'output/Raw/Transcripts/audio_{video_id}_segments.csv')
+
+        # Check which file exists and use it
+        if sentiment_file.exists():
+            file_path = sentiment_file
+            logger.info(f"Using sentiment file from output directory: {file_path}")
+        elif test_sentiment_file.exists():
+            file_path = test_sentiment_file
+            logger.info(f"Using sentiment file from test directory: {file_path}")
+        elif segments_file.exists():
+            file_path = segments_file
+            logger.info(f"Using segments file from Raw directory: {file_path}")
         else:
-            logger.info(f"Using sentiment file from: {file_path}")
+            raise FileNotFoundError(f"Could not find sentiment or segments file for video ID: {video_id}")
 
         df = pd.read_csv(file_path)
 
@@ -78,8 +87,12 @@ def plot_metrics(output_dir, video_id):
         # Plot 1: Audio Waveform
         ax = axs[0]
         try:
+            # Check if we have pre-calculated audio metrics
+            has_nebius_features = all(col in df.columns for col in ['speech_rate', 'absolute_intensity', 'relative_intensity'])
+
+            # Even if we have pre-calculated metrics, we still need to load the audio file for the waveform plot
             # Look for the audio file in the output directory
-            audio_path = Path(f'Output/Raw/Audio/audio_{video_id}.wav')
+            audio_path = Path(f'output/Raw/Audio/audio_{video_id}.wav')
 
             if os.path.exists(audio_path):
                 y, sr = librosa.load(audio_path)
@@ -95,6 +108,10 @@ def plot_metrics(output_dir, video_id):
             ax.set_xlabel('Time (seconds)')
             ax.set_ylabel('Amplitude')
             ax.grid(True, alpha=0.3)
+
+            # Free memory
+            del y
+            gc.collect()
         except Exception as e:
             logger.error(f"Error plotting waveform: {str(e)}")
             ax.text(0.5, 0.5, 'Waveform not available',
@@ -147,35 +164,53 @@ def plot_metrics(output_dir, video_id):
         ax.grid(True, alpha=0.3)
         ax.legend()
 
-        # Get audio waveform amplitude envelope
-        try:
-            # Look for the audio file in the output directory
-            audio_path = Path(f'Output/Raw/Audio/audio_{video_id}.wav')
+        # Check if we have pre-calculated audio metrics
+        has_nebius_features = all(col in df.columns for col in ['speech_rate', 'absolute_intensity', 'relative_intensity'])
 
-            if os.path.exists(audio_path):
-                y, sr = librosa.load(audio_path)
-            else:
-                raise FileNotFoundError(f"Could not find audio file in {audio_path}")
+        if has_nebius_features:
+            # Use pre-calculated absolute_intensity as our RMS equivalent
+            logger.info("Using pre-calculated absolute_intensity for RMS")
 
-            # Calculate the RMS energy envelope
-            frame_length = int(sr * 0.03)  # 30ms frames
-            hop_length = int(sr * 0.01)    # 10ms hop
-            rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
-        except Exception as e:
-            logger.error(f"Error loading audio for RMS calculation: {str(e)}")
-            # Create dummy RMS data
-            rms = np.ones(100)
-            sr = 16000
-            frame_length = int(sr * 0.03)
-            hop_length = int(sr * 0.01)
+            # Normalize to [0.5, 1.5] range for amplification
+            # First ensure it's in [0, 1] range (it should be already)
+            abs_intensity = df['absolute_intensity'].values
+            abs_intensity_norm = np.clip(abs_intensity, 0, 1)
 
-        # Resample RMS to match emotion data length
-        rms_times = librosa.times_like(rms, sr=sr, hop_length=hop_length)
-        resampled_rms = np.interp(df['start_time'], rms_times, rms)
+            # Then shift to [0.5, 1.5] range
+            normalized_rms = abs_intensity_norm + 0.5
+        else:
+            # Need to calculate RMS from audio file
+            logger.info("Calculating RMS from audio file")
 
-        # Normalize RMS to [0.5, 1.5] range for amplification
-        normalized_rms = ((resampled_rms - resampled_rms.min()) /
-                         (resampled_rms.max() - resampled_rms.min())) + 0.5
+            try:
+                # Look for the audio file in the output directory
+                audio_path = Path(f'output/Raw/Audio/audio_{video_id}.wav')
+
+                if os.path.exists(audio_path):
+                    y, sr = librosa.load(audio_path)
+                else:
+                    raise FileNotFoundError(f"Could not find audio file in {audio_path}")
+
+                # Calculate the RMS energy envelope
+                frame_length = int(sr * 0.03)  # 30ms frames
+                hop_length = int(sr * 0.01)    # 10ms hop
+                rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
+
+                # Resample RMS to match emotion data length
+                rms_times = librosa.times_like(rms, sr=sr, hop_length=hop_length)
+                resampled_rms = np.interp(df['start_time'], rms_times, rms)
+
+                # Normalize RMS to [0.5, 1.5] range for amplification
+                normalized_rms = ((resampled_rms - resampled_rms.min()) /
+                                (resampled_rms.max() - resampled_rms.min())) + 0.5
+
+                # Free memory
+                del y, sr, rms, rms_times, resampled_rms
+                gc.collect()
+            except Exception as e:
+                logger.error(f"Error loading audio for RMS calculation: {str(e)}")
+                # Create dummy RMS data
+                normalized_rms = np.ones(len(df)) * 0.75  # Middle of our [0.5, 1.5] range
 
         # Individual emotion plots with waveform-weighted amplification
         colors = ['#FF9999', '#66B2FF', '#99FF99', '#FF99CC', '#99CCFF', '#FFB366']
@@ -239,7 +274,7 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
     try:
         # Define output directory
         if output_dir is None:
-            output_dir = Path('Output/Analysis/Audio')
+            output_dir = Path('output/Analysis/Audio')
         else:
             output_dir = Path(output_dir)
 
@@ -247,7 +282,7 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
 
         # Determine input file path
         if input_file is None:
-            input_file = Path(f'Output/Raw/Transcripts/audio_{video_id}_segments.csv')
+            input_file = Path(f'output/Raw/Transcripts/audio_{video_id}_segments.csv')
         else:
             input_file = Path(input_file)
 
@@ -261,52 +296,71 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
         data = pd.read_csv(input_file)
         data.columns = data.columns.str.strip()
 
-        # Load audio file
-        try:
-            # Try to find the audio file in multiple locations
-            audio_path = Path(f'Output/Raw/Audio/audio_{video_id}.wav')
-            tmp_audio_path = Path(f'/tmp/outputs/audio_{video_id}.wav')
+        # Check if we have pre-calculated audio metrics from sentiment_nebius.py
+        has_nebius_features = all(col in data.columns for col in ['speech_rate', 'absolute_intensity', 'relative_intensity'])
 
-            if os.path.exists(audio_path):
-                y, sr = librosa.load(audio_path)
-                logger.info(f"Using audio file from: {audio_path}")
-            elif os.path.exists(tmp_audio_path):
-                y, sr = librosa.load(tmp_audio_path)
-                logger.info(f"Using audio file from: {tmp_audio_path}")
-            else:
-                raise FileNotFoundError(f"Could not find audio file in {audio_path} or {tmp_audio_path}")
+        if has_nebius_features:
+            # Use pre-calculated audio metrics
+            logger.info("Using pre-calculated audio metrics from sentiment file")
 
-            # Calculate audio features
-            frame_length = int(sr * 0.03)  # 30ms frames
-            hop_length = int(sr * 0.01)    # 10ms hop
+            # Use absolute_intensity directly as audio_intensity
+            audio_intensity = data['absolute_intensity'].values
 
-            # Get RMS energy (loudness)
-            rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
+            # No need to load audio file or calculate features
+            logger.info("Skipping audio file loading and feature extraction")
+        else:
+            # Need to calculate audio features from scratch
+            logger.info("Pre-calculated audio metrics not found, calculating from audio file")
 
-            # Get spectral centroid (brightness/pitch)
-            spectral_centroid = librosa.feature.spectral_centroid(
-                y=y, sr=sr,
-                n_fft=frame_length,
-                hop_length=hop_length
-            )[0]
+            try:
+                # Try to find the audio file in multiple locations
+                audio_path = Path(f'output/Raw/Audio/audio_{video_id}.wav')
+                tmp_audio_path = Path(f'/tmp/outputs/audio_{video_id}.wav')
 
-            # Get timestamps for audio features
-            times = librosa.times_like(rms, sr=sr, hop_length=hop_length)
+                if os.path.exists(audio_path):
+                    y, sr = librosa.load(audio_path)
+                    logger.info(f"Using audio file from: {audio_path}")
+                elif os.path.exists(tmp_audio_path):
+                    y, sr = librosa.load(tmp_audio_path)
+                    logger.info(f"Using audio file from: {tmp_audio_path}")
+                else:
+                    raise FileNotFoundError(f"Could not find audio file in {audio_path} or {tmp_audio_path}")
 
-            # Create interpolation functions for audio features
-            rms_interp = np.interp(data['start_time'], times, rms)
-            centroid_interp = np.interp(data['start_time'], times, spectral_centroid)
+                # Calculate audio features
+                frame_length = int(sr * 0.03)  # 30ms frames
+                hop_length = int(sr * 0.01)    # 10ms hop
 
-            # Normalize audio features to [0,1] range
-            rms_norm = (rms_interp - rms_interp.min()) / (rms_interp.max() - rms_interp.min())
-            centroid_norm = (centroid_interp - centroid_interp.min()) / (centroid_interp.max() - centroid_interp.min())
+                # Get RMS energy (loudness)
+                rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
 
-            # Combine audio features
-            audio_intensity = (rms_norm * 0.7 + centroid_norm * 0.3)  # Weighted combination
+                # Get spectral centroid (brightness/pitch)
+                spectral_centroid = librosa.feature.spectral_centroid(
+                    y=y, sr=sr,
+                    n_fft=frame_length,
+                    hop_length=hop_length
+                )[0]
 
-        except Exception as e:
-            logger.warning(f"Could not load audio file: {str(e)}")
-            audio_intensity = np.ones(len(data))  # Fallback if audio processing fails
+                # Get timestamps for audio features
+                times = librosa.times_like(rms, sr=sr, hop_length=hop_length)
+
+                # Create interpolation functions for audio features
+                rms_interp = np.interp(data['start_time'], times, rms)
+                centroid_interp = np.interp(data['start_time'], times, spectral_centroid)
+
+                # Normalize audio features to [0,1] range
+                rms_norm = (rms_interp - rms_interp.min()) / (rms_interp.max() - rms_interp.min())
+                centroid_norm = (centroid_interp - centroid_interp.min()) / (centroid_interp.max() - centroid_interp.min())
+
+                # Combine audio features
+                audio_intensity = (rms_norm * 0.7 + centroid_norm * 0.3)  # Weighted combination
+
+                # Free memory
+                del y, sr, rms, spectral_centroid, times, rms_interp, centroid_interp, rms_norm, centroid_norm
+                gc.collect()
+
+            except Exception as e:
+                logger.warning(f"Could not load audio file: {str(e)}")
+                audio_intensity = np.ones(len(data))  # Fallback if audio processing fails
 
         # Check for required columns
         required_columns = [
@@ -321,7 +375,7 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
             logger.warning(f"Missing columns in data: {missing_columns}")
 
             # Try to load the sentiment file
-            sentiment_file = Path(f'Output/Analysis/Audio/audio_{video_id}_sentiment.csv')
+            sentiment_file = Path(f'output/Analysis/Audio/audio_{video_id}_sentiment.csv')
             if os.path.exists(sentiment_file):
                 logger.info(f"Loading sentiment data from {sentiment_file}")
                 data = pd.read_csv(sentiment_file)
@@ -355,26 +409,105 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
         # Calculate a combined emotion score
         data['emotion_intensity'] = data[['excitement', 'funny', 'happiness', 'anger', 'sadness']].max(axis=1)
 
-        # Create weighted highlight score (now including audio intensity)
-        data['weighted_highlight_score'] = (
-            data['highlight_score'] * 0.5 +      # Base highlight score
-            data['emotion_intensity'] * 0.2 +     # Emotion contribution
-            abs(data['sentiment_score']) * 0.1 +  # Sentiment intensity contribution
-            audio_intensity * 0.2                 # Audio intensity contribution
-        )
+        # We already checked for Nebius features above, but we'll keep this for clarity
+        # has_nebius_features is already defined
+
+        if has_nebius_features:
+            # If we have data from sentiment_nebius.py, use the highlight_score directly
+            # with minimal adjustment for audio intensity variations
+            logger.info("Using Nebius-generated highlight score with minimal adjustment")
+
+            # The highlight_score from sentiment_nebius.py already incorporates:
+            # - Model score (50%)
+            # - Speech rate (15%)
+            # - Relative loudness (15%)
+            # - Absolute loudness (10%)
+            # - Emotional intensity (10%)
+
+            # We'll just make a small adjustment based on the current audio intensity
+            # to account for any local variations not captured in the original calculation
+
+            # Check if the lengths match
+            if len(data) != len(audio_intensity):
+                logger.warning(f"Length mismatch: data has {len(data)} rows, audio_intensity has {len(audio_intensity)} elements")
+
+                # Resize audio_intensity to match data length
+                if len(data) < len(audio_intensity):
+                    logger.info(f"Truncating audio_intensity from {len(audio_intensity)} to {len(data)} elements")
+                    audio_intensity = audio_intensity[:len(data)]
+                else:
+                    logger.info(f"Extending audio_intensity from {len(audio_intensity)} to {len(data)} elements")
+                    # Extend audio_intensity by repeating the last value
+                    extension = np.ones(len(data) - len(audio_intensity)) * audio_intensity[-1]
+                    audio_intensity = np.concatenate([audio_intensity, extension])
+
+            data['weighted_highlight_score'] = (
+                data['highlight_score'] * 0.95 +    # Nebius highlight score (95%)
+                audio_intensity * 0.05              # Current audio intensity (5%)
+            )
+        else:
+            # For legacy data without Nebius features, use the original calculation
+            logger.info("Using legacy highlight score calculation")
+
+            # Check if the lengths match
+            if len(data) != len(audio_intensity):
+                logger.warning(f"Length mismatch: data has {len(data)} rows, audio_intensity has {len(audio_intensity)} elements")
+
+                # Resize audio_intensity to match data length
+                if len(data) < len(audio_intensity):
+                    logger.info(f"Truncating audio_intensity from {len(audio_intensity)} to {len(data)} elements")
+                    audio_intensity = audio_intensity[:len(data)]
+                else:
+                    logger.info(f"Extending audio_intensity from {len(audio_intensity)} to {len(data)} elements")
+                    # Extend audio_intensity by repeating the last value
+                    extension = np.ones(len(data) - len(audio_intensity)) * audio_intensity[-1]
+                    audio_intensity = np.concatenate([audio_intensity, extension])
+
+            data['weighted_highlight_score'] = (
+                data['highlight_score'] * 0.5 +      # Base highlight score
+                data['emotion_intensity'] * 0.2 +    # Emotion contribution
+                abs(data['sentiment_score']) * 0.1 + # Sentiment intensity contribution
+                audio_intensity * 0.2                # Audio intensity contribution
+            )
 
         # Find peaks in weighted highlight score
-        peaks, properties = find_peaks(
-            data['weighted_highlight_score'],
-            distance=20,        # Minimum samples between peaks
-            prominence=0.3,     # Minimum prominence of peaks
-            height=0.4         # Minimum height of peaks
-        )
+        # Adjust peak detection parameters based on data source
+        if has_nebius_features:
+            # For Nebius data, use more sensitive parameters
+            # since the highlight scores are already well-calibrated
+            peaks, properties = find_peaks(
+                data['weighted_highlight_score'],
+                distance=15,        # Reduced minimum distance between peaks
+                prominence=0.25,    # Lower prominence threshold
+                height=0.35         # Lower height threshold
+            )
+            logger.info(f"Using Nebius-optimized peak detection (found {len(peaks)} peaks)")
+        else:
+            # For legacy data, use the original parameters
+            peaks, properties = find_peaks(
+                data['weighted_highlight_score'],
+                distance=20,        # Minimum samples between peaks
+                prominence=0.3,     # Minimum prominence of peaks
+                height=0.4          # Minimum height of peaks
+            )
+            logger.info(f"Using legacy peak detection (found {len(peaks)} peaks)")
 
         # Create DataFrame with peak moments
         peak_moments = data.iloc[peaks].copy()
         peak_moments['prominence'] = properties['prominences']
-        peak_moments['audio_intensity'] = audio_intensity[peaks]
+
+        # Check if peaks indices are within audio_intensity bounds
+        valid_indices = [i for i in peaks if i < len(audio_intensity)]
+        if len(valid_indices) < len(peaks):
+            logger.warning(f"Some peak indices are out of bounds for audio_intensity. Using valid indices only.")
+            # If we have no valid indices, use zeros
+            if len(valid_indices) == 0:
+                peak_moments['audio_intensity'] = 0.0
+            else:
+                # Use the valid indices and fill any missing values with the mean
+                peak_moments['audio_intensity'] = np.mean(audio_intensity[valid_indices])
+        else:
+            peak_moments['audio_intensity'] = audio_intensity[peaks]
 
         # Sort by weighted_highlight_score
         peak_moments = peak_moments.sort_values(
@@ -382,22 +515,25 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
             ascending=False
         )
 
-        # Select top 10 moments
-        top_highlights = peak_moments.head(10)
+        # Select top 10 moments and create a copy to avoid SettingWithCopyWarning
+        top_highlights = peak_moments.head(10).copy()
 
         # Add duration column
         top_highlights['duration'] = top_highlights['end_time'] - top_highlights['start_time']
 
-        # Select and reorder columns for output
+        # Select and reorder columns for output - time columns first, then scores, text at the end
         output_columns = [
-            'start_time', 'end_time', 'duration', 'text',
+            'start_time', 'end_time', 'duration',
             'weighted_highlight_score', 'highlight_score',
-            'emotion_intensity', 'sentiment_score', 'audio_intensity'
+            'emotion_intensity', 'sentiment_score', 'audio_intensity',
+            'text'
         ]
         top_highlights = top_highlights[output_columns]
 
-        # Skip saving to CSV to reduce output files
-        logger.info(f"Top 10 highlights calculated (not saving to file)")
+        # Save to CSV temporarily for integration
+        output_file = output_dir / f"audio_{video_id}_top_highlights.csv"
+        top_highlights.to_csv(output_file, index=False)
+        logger.info(f"Top 10 highlights saved to {output_file} (will be removed after integration)")
 
         # List of emotions to analyze
         emotions = ['excitement', 'funny', 'happiness', 'anger', 'sadness']
@@ -405,23 +541,42 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
         # Process each emotion
         for emotion in emotions:
             # Create weighted emotion score including audio intensity
+            # Use consistent emotion score weighting for both Nebius and legacy data
             data[f'weighted_{emotion}_score'] = (
-                data[emotion] * 0.7 +          # Base emotion score
-                audio_intensity * 0.3          # Audio intensity contribution
+                data[emotion] * 0.7 +          # Base emotion score (70%)
+                audio_intensity * 0.3          # Audio intensity contribution (30%)
             )
 
-            # Find peaks for this emotion
-            emotion_peaks, emotion_properties = find_peaks(
-                data[f'weighted_{emotion}_score'],
-                distance=20,        # Minimum samples between peaks
-                prominence=0.2,     # Lower prominence threshold for emotions
-                height=0.3         # Lower height threshold for emotions
-            )
+            if has_nebius_features:
+                # For Nebius data, use more sensitive peak detection parameters
+                emotion_peaks, emotion_properties = find_peaks(
+                    data[f'weighted_{emotion}_score'],
+                    distance=15,        # Reduced minimum distance
+                    prominence=0.15,    # Lower prominence threshold
+                    height=0.25         # Lower height threshold
+                )
+                logger.info(f"Using Nebius-optimized peak detection for {emotion} (found {len(emotion_peaks)} peaks)")
+            else:
+                # For legacy data, use the original parameters
+                emotion_peaks, emotion_properties = find_peaks(
+                    data[f'weighted_{emotion}_score'],
+                    distance=20,        # Minimum samples between peaks
+                    prominence=0.2,     # Lower prominence threshold for emotions
+                    height=0.3          # Lower height threshold for emotions
+                )
+                logger.info(f"Using legacy peak detection for {emotion} (found {len(emotion_peaks)} peaks)")
 
             # Create DataFrame with emotion peak moments
             emotion_peak_moments = data.iloc[emotion_peaks].copy()
             emotion_peak_moments['prominence'] = emotion_properties['prominences']
-            emotion_peak_moments['audio_intensity'] = audio_intensity[emotion_peaks]
+
+            # Check if emotion_peaks indices are within audio_intensity bounds
+            valid_indices = [i for i in emotion_peaks if i < len(audio_intensity)]
+            if len(valid_indices) < len(emotion_peaks):
+                logger.warning(f"Some emotion peak indices are out of bounds for audio_intensity. Using valid indices only.")
+                emotion_peak_moments['audio_intensity'] = audio_intensity[valid_indices]
+            else:
+                emotion_peak_moments['audio_intensity'] = audio_intensity[emotion_peaks]
 
             # Sort by weighted emotion score
             emotion_peak_moments = emotion_peak_moments.sort_values(
@@ -429,22 +584,25 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
                 ascending=False
             )
 
-            # Select top 5 moments
-            top_emotion_moments = emotion_peak_moments.head(5)
+            # Select top 5 moments and create a copy to avoid SettingWithCopyWarning
+            top_emotion_moments = emotion_peak_moments.head(5).copy()
 
             # Add duration column
             top_emotion_moments['duration'] = top_emotion_moments['end_time'] - top_emotion_moments['start_time']
 
-            # Select columns for output
+            # Select columns for output - time columns first, then scores, text at the end
             emotion_output_columns = [
-                'start_time', 'end_time', 'duration', 'text',
+                'start_time', 'end_time', 'duration',
                 f'weighted_{emotion}_score', emotion,
-                'audio_intensity', 'prominence'
+                'audio_intensity', 'prominence',
+                'text'
             ]
             top_emotion_moments = top_emotion_moments[emotion_output_columns]
 
-            # Skip saving to CSV to reduce output files
-            logger.info(f"Top 5 {emotion} moments calculated (not saving to file)")
+            # Save to CSV temporarily for integration
+            emotion_output_file = output_dir / f"audio_{video_id}_top_{emotion}_moments.csv"
+            top_emotion_moments.to_csv(emotion_output_file, index=False)
+            logger.info(f"Top 5 {emotion} moments saved to {emotion_output_file} (will be removed after integration)")
 
         return top_highlights
 
