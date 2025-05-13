@@ -1,162 +1,240 @@
-# Twitch Analysis Cloud Run Service
+# KlipStream Analysis
 
-This Google Cloud Run service analyzes Twitch VODs and uploads the results to Convex. It's designed to work with the KlipStream frontend project.
+KlipStream Analysis is a comprehensive system for analyzing Twitch VODs, extracting insights from both streamer content and audience reactions, and identifying highlight-worthy moments. The system processes video, audio, transcripts, and chat data to generate detailed analysis that can be used to create highlight clips and understand viewer engagement.
 
-## Features
+## System Overview
 
-- Downloads Twitch VODs using TwitchDownloaderCLI
-- Extracts audio and converts it to WAV format
-- Transcribes the audio using AssemblyAI
-- Performs sentiment analysis on the transcription
-- Analyzes chat data and sentiment
-- Identifies highlights and emotional patterns
-- Enhanced analysis using Hugging Face models for improved sentiment and emotion detection
-- Multiple processing methods for transcript analysis (batch, parallel, optimized)
-- Generates visualizations for sentiment and emotion analysis
-- Uploads all results to Google Cloud Storage buckets with proper folder structure:
-  - `klipstream-vods-raw`: For video, audio, and waveform files (organized in folders by VOD ID)
-  - `klipstream-transcripts`: For transcript paragraph and word files (organized in folders by VOD ID)
-  - `klipstream-chatlogs`: For chat logs (organized in folders by VOD ID)
+The KlipStream Analysis system consists of two main pipelines:
 
-## Integration with Frontend
+1. **Raw Pipeline**: Downloads and processes raw data from Twitch VODs
+2. **Analysis Pipeline**: Analyzes the processed data to extract insights and identify highlights
 
-This service is designed to work with the KlipStream frontend project. The workflow is:
+All processed files are uploaded to Google Cloud Storage buckets with a structured organization by VOD ID:
+- `klipstream-vods-raw`: Video, audio, and waveform files
+- `klipstream-transcripts`: Transcript files and segment data
+- `klipstream-chatlogs`: Chat log files
+- `klipstream-analysis`: Integrated analysis files
 
-1. The frontend creates a video entry in the database when a user submits a Twitch VOD URL
-2. The frontend then calls this Cloud Run service with the Twitch VOD URL
-3. This service processes the video and uploads the results to Google Cloud Storage buckets
-4. The service updates the existing database record with GCS file URLs
+## Raw Pipeline
 
-## Enhanced Transcript Analysis
+The raw pipeline handles the initial data acquisition and processing for Twitch VODs.
 
-The service now includes advanced transcript analysis using Hugging Face models for improved sentiment and emotion detection. This provides more detailed insights into the content of Twitch VODs.
+### Components
 
-### Analysis Methods
+- **Downloader**: Downloads Twitch VODs and extracts audio using TwitchDownloaderCLI
+- **Transcriber**: Transcribes audio using Deepgram with the nova-3 model
+- **Sliding Window Generator**: Creates time-based segments (60-second windows with 30-second overlap)
+- **Waveform Generator**: Creates audio waveform data for visualization
+- **Chat Downloader**: Downloads and processes Twitch chat logs
+- **Uploader**: Uploads all raw files to Google Cloud Storage buckets
 
-Three different processing methods are available for transcript analysis:
+### Data Flow
 
-1. **Batch Processing** (`run_batch_analysis.sh`): Processes transcript data sequentially with checkpointing for reliability
-2. **Parallel Processing** (`run_parallel_analysis.sh`): Uses multiple processes to analyze transcript data in parallel
-3. **Optimized Processing** (`run_optimized_analysis.sh`): Uses thread pooling for improved performance on I/O-bound operations
+1. The pipeline starts with a Twitch VOD URL
+2. The downloader extracts the video ID and downloads the VOD
+3. Audio is extracted from the video and saved as a WAV file
+4. The transcriber processes the audio to generate transcript files
+5. The sliding window generator creates segment files for analysis
+6. The waveform generator creates audio visualization data
+7. The chat downloader retrieves and processes chat logs
+8. All files are uploaded to their respective GCS buckets
+9. Temporary directories (downloads and data) are cleaned up
 
-### Hugging Face Models
+### Outputs
 
-The analysis uses the following models from Hugging Face:
+The raw pipeline generates the following files in the `output/Raw` directory:
+- `Videos/video_{video_id}.mp4`: The downloaded Twitch VOD
+- `Audio/audio_{video_id}.wav`: Extracted audio in WAV format
+- `Transcripts/audio_{video_id}_transcript.json`: Full transcript data from Deepgram
+- `Transcripts/audio_{video_id}_segments.csv`: Time-segmented transcript data
+- `Waveforms/audio_{video_id}_waveform.csv`: Audio waveform data
+- `Chat/{video_id}_chat.csv`: Processed chat log data
 
-- **Sentiment Analysis**: [llmware/slim-sentiment-tool](https://huggingface.co/llmware/slim-sentiment-tool)
-- **Emotion Analysis**: [llmware/slim-emotions-tool](https://huggingface.co/llmware/slim-emotions-tool)
+## Analysis Pipeline
 
-### Visualizations
+The analysis pipeline processes the raw data to extract insights and identify highlights.
 
-The analysis generates several visualizations to help understand the content:
+### Components
 
-1. **Sentiment Comparison**: A heatmap comparing the existing sentiment analysis with the Hugging Face sentiment analysis
-2. **Emotion Distribution**: A bar chart showing the distribution of emotions in the transcript
-3. **Sentiment Timeline**: A line chart showing sentiment over time
-4. **Emotion Timeline**: A multi-panel chart showing the occurrence of the top 5 emotions over time
+- **Audio Sentiment Analysis**: Analyzes transcript segments for sentiment and emotions using Nebius API
+- **Audio Highlight Analysis**: Identifies potential highlights based on audio features
+- **Chat Processing**: Processes chat data for sentiment and engagement metrics
+- **Chat Sentiment Analysis**: Analyzes chat for emotional reactions
+- **Chat Highlight Analysis**: Identifies potential highlights based on chat activity
+- **Integration**: Combines audio and chat analysis for comprehensive insights
 
-For more details, see [HUGGINGFACE_ANALYSIS_README.md](HUGGINGFACE_ANALYSIS_README.md).
+### Data Flow
 
-## Requirements
+1. The pipeline starts with the video ID from the raw pipeline
+2. Chat data is processed to extract message patterns and metrics
+3. Chat sentiment analysis identifies emotional reactions
+4. Chat highlight analysis identifies moments of high engagement
+5. Audio sentiment analysis processes transcript segments for emotions
+6. Audio highlight analysis identifies potential highlights based on audio features
+7. The integration module combines audio and chat analysis
+8. Final integrated analysis is uploaded to the GCS analysis bucket
 
-- Google Cloud Project with Cloud Run enabled
-- Docker installed locally
-- Google Cloud SDK installed locally
-- AssemblyAI API key
-- Google API key (for sentiment analysis)
-- Convex account and project
-- Python 3.8+ with packages listed in `requirements.txt` and `huggingface_analysis_requirements.txt`
+### Outputs
 
-## Setup
+The analysis pipeline generates the following files in the `output/Analysis` directory:
+- `Audio/{video_id}_sentiment.csv`: Audio sentiment analysis results
+- `Audio/{video_id}_highlights.csv`: Audio-based highlight analysis
+- `Audio/{video_id}_*.png`: Various visualization plots
+- `Chat/{video_id}_highlight_analysis.csv`: Chat-based highlight analysis
+- `{video_id}_integrated_analysis.csv`: Combined audio and chat analysis
 
-### 1. Configure Environment Variables
+## Running the Pipelines
 
-Update the `.env.yaml` file with your API keys:
+### Prerequisites
 
-```yaml
-ASSEMBLYAI_API_KEY: "your_assemblyai_api_key_here"
-GOOGLE_API_KEY: "your_google_api_key_here"
-CONVEX_UPLOAD_URL: "your_convex_upload_endpoint_here"
-```
+- Python 3.8+
+- Required Python packages (see `requirements.txt`)
+- Google Cloud Storage account with configured buckets
+- Deepgram API key
+- Nebius API key for sentiment analysis
+- Git LFS (for downloading large binary files)
 
-### 2. Update the Existing Cloud Run Service
+### Environment Setup
 
-Run the update script to update the existing "Chat-Audio-Analytics" service:
+1. Install Git LFS if you don't have it already:
+   - Download from [git-lfs.github.com](https://git-lfs.github.com/)
+   - Or install via package manager:
+     - macOS: `brew install git-lfs`
+     - Ubuntu/Debian: `sudo apt install git-lfs`
+     - Windows: `winget install -e --id GitHub.GitLFS`
+
+2. Clone the repository with Git LFS:
+   ```bash
+   git lfs install
+   git clone https://github.com/Krio-Labs/klipstream-analysis.git
+   cd klipstream-analysis
+   git lfs pull
+   ```
+
+3. Create a virtual environment:
+   ```bash
+   python -m venv .venv
+   ```
+
+4. Activate the virtual environment:
+   - Windows: `.venv\Scripts\activate`
+   - macOS/Linux: `source .venv/bin/activate`
+
+5. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+6. Create a `.env` file with your API keys:
+   ```
+   DEEPGRAM_API_KEY=your_deepgram_api_key
+   NEBIUS_API_KEY=your_nebius_api_key
+   GCP_SERVICE_ACCOUNT_PATH=path_to_your_service_account_key.json
+   ```
+
+7. Verify binary files were downloaded correctly:
+   ```bash
+   # Check TwitchDownloaderCLI and FFMPEG binaries
+   ls -la raw_pipeline/bin/
+
+   # Check model files
+   ls -la analysis_pipeline/chat/models/
+   ```
+
+### Running the Complete Pipeline
+
+To run the complete pipeline (raw + analysis):
 
 ```bash
-./update_cloud_run.sh
-```
-
-For more detailed instructions, see [DEPLOYMENT.md](DEPLOYMENT.md).
-
-### 3. Manual Deployment (Alternative)
-
-If you prefer to deploy manually:
-
-```bash
-# Build the Docker image
-docker build -t gcr.io/optimum-habitat-429714-a7/Chat-Audio-Analytics .
-
-# Push the image to Google Container Registry
-docker push gcr.io/optimum-habitat-429714-a7/Chat-Audio-Analytics
-
-# Update the Cloud Run service
-gcloud run deploy Chat-Audio-Analytics \
-    --image gcr.io/optimum-habitat-429714-a7/Chat-Audio-Analytics \
-    --platform managed \
-    --region us-central1 \
-    --project optimum-habitat-429714-a7 \
-    --env-vars-file .env.yaml \
-    --allow-unauthenticated
-```
-
-## Usage
-
-Send a POST request to the Cloud Run service URL:
-
-```json
-{
-  "url": "https://www.twitch.tv/videos/YOUR_VIDEO_ID"
-}
-```
-
-**Important**: The Twitch video must already exist in your database before calling this service.
-
-## Testing
-
-To test locally:
-
-```bash
-# Install the Functions Framework
-pip install functions-framework
-
-# Run the function locally
-functions-framework --target=run_pipeline --debug
-
-# In another terminal, use the test script
-python test_cloud_function.py
-```
-
-For a clean run of the pipeline (recommended):
-
-```bash
-# Clean up directories and run the pipeline
-./run_pipeline.sh https://www.twitch.tv/videos/YOUR_VIDEO_ID
-
-# Or run the cleanup script separately
-python cleanup.py
 python main.py https://www.twitch.tv/videos/YOUR_VIDEO_ID
 ```
 
-To test the GCS upload functionality specifically:
+### Running Individual Pipelines
+
+To run only the raw pipeline:
 
 ```bash
-# Test uploading files to GCS
-python test_gcs_upload.py --video-id YOUR_VIDEO_ID --test-upload
-
-# Test uploading specific files (video, audio, and waveform)
-python test_gcs_upload.py --video-id YOUR_VIDEO_ID --test-specific
-
-# Test updating video status
-python test_gcs_upload.py --video-id YOUR_VIDEO_ID --test-status
+python run_raw_pipeline.py https://www.twitch.tv/videos/YOUR_VIDEO_ID
 ```
+
+To run only the analysis pipeline (requires raw pipeline to have been run first):
+
+```bash
+python run_analysis_pipeline.py YOUR_VIDEO_ID [--concurrency N] [--timeout N]
+```
+
+Optional parameters:
+- `--concurrency`: Maximum number of concurrent API requests for sentiment analysis
+- `--timeout`: API request timeout in seconds
+
+## Binary Files and Models
+
+The repository includes several large binary files that are managed using Git LFS:
+
+### TwitchDownloaderCLI
+
+The system uses TwitchDownloaderCLI to download Twitch VODs and chat logs. Platform-specific binaries are included:
+- `raw_pipeline/bin/TwitchDownloaderCLI` (Linux)
+- `raw_pipeline/bin/TwitchDownloaderCLI_mac` (macOS)
+- `raw_pipeline/bin/TwitchDownloaderCLI.exe` (Windows)
+
+### FFMPEG
+
+FFMPEG is used for audio extraction and processing. Platform-specific binaries are included:
+- `raw_pipeline/bin/ffmpeg` (Linux)
+- `raw_pipeline/bin/ffmpeg_mac` (macOS)
+- `raw_pipeline/bin/ffmpeg.exe` (Windows)
+
+### Model Files
+
+The chat analysis pipeline uses pre-trained machine learning models:
+- `analysis_pipeline/chat/models/emotion_classifier_pipe_lr.pkl`: Classifies chat messages by emotion
+- `analysis_pipeline/chat/models/highlight_classifier_pipe_lr.pkl`: Identifies potential highlights from chat
+
+## Configuration Options
+
+The system can be configured through environment variables and command-line parameters:
+
+### Environment Variables
+
+- `DEEPGRAM_API_KEY`: API key for Deepgram transcription
+- `NEBIUS_API_KEY`: API key for Nebius sentiment analysis
+- `GCP_SERVICE_ACCOUNT_PATH`: Path to Google Cloud service account key file
+
+### Directory Structure
+
+The system uses the following directory structure:
+- `output/Raw`: Raw files from the raw pipeline
+- `output/Analysis`: Analysis files from the analysis pipeline
+- `downloads`: Temporary directory for downloaded files
+- `data`: Temporary directory for intermediate data
+
+### Google Cloud Storage Buckets
+
+The system uses the following GCS buckets:
+- `klipstream-vods-raw`: For video, audio, and waveform files
+- `klipstream-transcripts`: For transcript files
+- `klipstream-chatlogs`: For chat log files
+- `klipstream-analysis`: For integrated analysis files
+
+## Testing
+
+For testing purposes, you can use the following Twitch VOD URL:
+```
+https://www.twitch.tv/videos/2434635255
+```
+
+## Cloud Function Deployment
+
+The system can also be deployed as a Google Cloud Function:
+
+```bash
+gcloud functions deploy klipstream-analysis \
+    --runtime python39 \
+    --trigger-http \
+    --allow-unauthenticated \
+    --entry-point run_pipeline \
+    --env-vars-file .env.yaml
+```
+
+For more detailed deployment instructions, see [decision_docs/DEPLOYMENT.md](decision_docs/DEPLOYMENT.md).
