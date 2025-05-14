@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     unzip \
     curl \
     gnupg \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Google Cloud SDK
@@ -19,6 +20,11 @@ RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.c
 # Set working directory
 WORKDIR /app
 
+# Install Git LFS
+RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && \
+    apt-get install git-lfs && \
+    git lfs install
+
 # Copy requirements first for better caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -26,22 +32,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Download and set up TwitchDownloaderCLI
-RUN mkdir -p /app/bin
-RUN wget -q https://github.com/lay295/TwitchDownloader/releases/download/1.55.0/TwitchDownloaderCLI-Linux-x64.zip -O /tmp/twitch-dl.zip \
-    && unzip /tmp/twitch-dl.zip -d /app/bin \
-    && chmod +x /app/bin/TwitchDownloaderCLI \
-    && rm /tmp/twitch-dl.zip
-
-# Create symbolic links
-RUN ln -sf /app/bin/TwitchDownloaderCLI /app/TwitchDownloaderCLI \
-    && ln -sf /usr/bin/ffmpeg /app/ffmpeg
+# Make sure the binary files are executable
+RUN chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI && \
+    chmod +x /app/raw_pipeline/bin/ffmpeg
 
 # Set environment variables
-ENV PATH="/app/bin:${PATH}"
-
-# Cloud Functions uses the gunicorn webserver
+ENV PATH="/app/raw_pipeline/bin:${PATH}"
+ENV DOTNET_BUNDLE_EXTRACT_BASE_DIR="/tmp/.dotnet/bundle_extract"
 ENV PORT=8080
+
+# Create necessary directories
+RUN mkdir -p /tmp/output /tmp/downloads /tmp/data /tmp/logs
 
 # Use functions-framework to start the function
 CMD exec functions-framework --target=run_pipeline --port=${PORT}

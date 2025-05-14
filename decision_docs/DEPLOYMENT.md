@@ -1,70 +1,115 @@
-# Deploying the Twitch Analysis Service
+# Deploying KlipStream Analysis
 
-This document provides instructions for deploying the Twitch Analysis service to Google Cloud Run.
+This document provides detailed instructions for deploying the KlipStream Analysis pipeline to Google Cloud.
 
 ## Prerequisites
 
-1. Google Cloud Platform account with Cloud Run enabled
-2. Docker installed on your local machine
-3. Google Cloud CLI (gcloud) installed and configured
-4. Deepgram API key
-5. Google API key (for sentiment analysis)
-6. Google Cloud Storage buckets created:
-   - `klipstream-vods-raw`
-   - `klipstream-transcripts`
-   - `klipstream-chatlogs`
-7. Service account with Storage Object Admin permissions
+Before deploying, ensure you have:
 
-## Updating the Existing Cloud Run Service
+1. **Google Cloud Project**: A Google Cloud project with billing enabled
+2. **Google Cloud SDK**: Installed and configured on your local machine
+3. **Docker**: Installed locally (for local builds)
+4. **Service Account**: A service account with appropriate permissions
+5. **API Keys**: Required API keys for Deepgram and Nebius
+6. **GCS Buckets**: The following buckets created in Google Cloud Storage:
+   - `klipstream-vods-raw`: For video, audio, and waveform files
+   - `klipstream-transcripts`: For transcript files
+   - `klipstream-chatlogs`: For chat log files
+   - `klipstream-analysis`: For integrated analysis files
 
-This project is set up to update the existing "Chat-Audio-Analytics" Cloud Run service. To update the service:
+## Environment Configuration
 
-1. Update the `.env.yaml` file with your API keys and GCS configuration:
+Create a `.env.yaml` file in the project root with the following content:
 
 ```yaml
-DEEPGRAM_API_KEY: "your_deepgram_api_key_here"
-GOOGLE_API_KEY: "your_google_api_key_here"
-GCS_PROJECT: "klipstream"
+DEEPGRAM_API_KEY: "your_deepgram_api_key"
+GOOGLE_API_KEY: "your_google_api_key"
+NEBIUS_API_KEY: "your_nebius_api_key"
+GCS_PROJECT: "your_gcs_project_id"
 GCS_VOD_BUCKET: "klipstream-vods-raw"
 GCS_TRANSCRIPT_BUCKET: "klipstream-transcripts"
 GCS_CHATLOG_BUCKET: "klipstream-chatlogs"
+GCS_ANALYSIS_BUCKET: "klipstream-analysis"
 ```
 
-2. Run the update script:
+## Service Account Setup
 
-```bash
-./update_cloud_run.sh
-```
+1. Create a service account in the Google Cloud Console:
+   ```bash
+   gcloud iam service-accounts create klipstream-service \
+       --display-name="KlipStream Service Account"
+   ```
 
-This script will:
-- Build a Docker image with your code
-- Push the image to Google Container Registry
-- Update the existing Cloud Run service with the new image
+2. Grant the service account the necessary permissions:
+   ```bash
+   gcloud projects add-iam-policy-binding your-project-id \
+       --member="serviceAccount:klipstream-service@your-project-id.iam.gserviceaccount.com" \
+       --role="roles/storage.objectAdmin"
+   ```
 
-## Manual Deployment Steps
+3. Create and download a service account key:
+   ```bash
+   gcloud iam service-accounts keys create new-service-account-key.json \
+       --iam-account=klipstream-service@your-project-id.iam.gserviceaccount.com
+   ```
+
+4. Place the key file in the project root directory.
+
+## Deployment Options
+
+### Option 1: Cloud Run Deployment (Recommended)
+
+Cloud Run is recommended for production use as it provides:
+- Longer execution times (up to 2 hours)
+- More memory (up to 32GB)
+- More CPU (up to 8 vCPU cores)
+- Better scaling capabilities
+
+#### Using the Deployment Script
+
+1. Run the deployment script:
+   ```bash
+   ./deploy_cloud_run.sh
+   ```
+
+2. Follow the prompts to select:
+   - Deployment method (local Docker build or Cloud Build)
+   - Resource configuration (CPU, memory, timeout)
+
+3. The script will:
+   - Build the Docker image
+   - Push it to Google Container Registry
+   - Deploy it to Cloud Run
+   - Configure environment variables
+   - Set up service account permissions
+
+#### Manual Deployment Steps
 
 If you prefer to deploy manually, follow these steps:
 
 1. Build the Docker image:
 ```bash
-docker build -t gcr.io/optimum-habitat-429714-a7/Chat-Audio-Analytics .
+docker build -t gcr.io/optimum-habitat-429714-a7/klipstream-analysis .
 ```
 
 2. Push the image to Google Container Registry:
 ```bash
-docker push gcr.io/optimum-habitat-429714-a7/Chat-Audio-Analytics
+docker push gcr.io/optimum-habitat-429714-a7/klipstream-analysis
 ```
 
-3. Update the Cloud Run service:
+3. Deploy the Cloud Run service:
 ```bash
-gcloud run deploy Chat-Audio-Analytics \
-    --image gcr.io/optimum-habitat-429714-a7/Chat-Audio-Analytics \
+gcloud run deploy klipstream-analysis \
+    --image gcr.io/optimum-habitat-429714-a7/klipstream-analysis \
     --platform managed \
     --region us-central1 \
     --project optimum-habitat-429714-a7 \
     --env-vars-file .env.yaml \
     --allow-unauthenticated \
-    --service-account="klipstream-service@optimum-habitat-429714-a7.iam.gserviceaccount.com"
+    --service-account="klipstream-service@optimum-habitat-429714-a7.iam.gserviceaccount.com" \
+    --cpu=4 \
+    --memory=8Gi \
+    --timeout=3600s
 ```
 
 4. Grant GCS permissions to the service account:
@@ -73,6 +118,16 @@ gcloud projects add-iam-policy-binding optimum-habitat-429714-a7 \
     --member="serviceAccount:klipstream-service@optimum-habitat-429714-a7.iam.gserviceaccount.com" \
     --role="roles/storage.objectAdmin"
 ```
+
+### Option 2: Cloud Function Deployment
+
+For development or testing, you can deploy as a Google Cloud Function:
+
+```bash
+./deploy_cloud_function.sh
+```
+
+This deploys a 2nd generation Cloud Function with 16GB memory and 60-minute timeout.
 
 ## Testing
 

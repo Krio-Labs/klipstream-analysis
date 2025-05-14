@@ -224,33 +224,51 @@ For testing purposes, you can use the following Twitch VOD URL:
 https://www.twitch.tv/videos/2434635255
 ```
 
-## Cloud Function Deployment
+## Deployment Options
 
-The system can be deployed as a Google Cloud Function using the provided deployment script:
+The KlipStream Analysis system can be deployed in two ways:
+
+### Cloud Run Deployment (Recommended)
+
+For production use, we recommend deploying as a Google Cloud Run service using the provided script:
+
+```bash
+./deploy_cloud_run.sh
+```
+
+This script:
+1. Reads configuration from `.env.yaml`
+2. Builds and deploys a Docker container with:
+   - Configurable CPU (2-8 cores)
+   - Configurable memory (4-32GB)
+   - Configurable timeout (up to 2 hours)
+   - HTTP trigger
+3. Configures the service account with necessary permissions
+
+#### Cloud Run Benefits
+
+- **Longer Execution Time**: Up to 2 hours (7200 seconds)
+- **More Memory**: Up to 32GB RAM
+- **More CPU**: Up to 8 vCPU cores
+- **Better Scaling**: Handles multiple concurrent requests efficiently
+- **Cost Efficiency**: Pay only for the time your service is processing requests
+
+### Cloud Function Deployment (Alternative)
+
+For development or testing, you can deploy as a Google Cloud Function:
 
 ```bash
 ./deploy_cloud_function.sh
 ```
 
-This script:
-1. Reads configuration from `.env.yaml`
-2. Deploys a 2nd generation Cloud Function with:
-   - 16GB memory
-   - 60-minute timeout
-   - HTTP trigger
-   - `run_pipeline` entry point
-3. Configures the service account with necessary permissions
+This script deploys a 2nd generation Cloud Function with 16GB memory and 60-minute timeout.
 
-### Cloud Function Limitations
-
-When deploying as a Cloud Function, be aware of these limitations:
+#### Cloud Function Limitations
 
 - **Execution Time**: Maximum 60 minutes (3600 seconds)
 - **Memory**: Maximum 16GB RAM
 - **Disk Space**: Maximum 10GB in `/tmp` directory
 - **Cold Starts**: Functions that are not frequently used may experience cold starts
 - **Concurrency**: Limited ability to handle multiple concurrent requests
-
-For longer or more resource-intensive workloads, consider using Cloud Run instead.
 
 For more detailed deployment instructions, see [decision_docs/DEPLOYMENT.md](decision_docs/DEPLOYMENT.md).
