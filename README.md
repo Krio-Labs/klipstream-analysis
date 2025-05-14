@@ -226,15 +226,31 @@ https://www.twitch.tv/videos/2434635255
 
 ## Cloud Function Deployment
 
-The system can also be deployed as a Google Cloud Function:
+The system can be deployed as a Google Cloud Function using the provided deployment script:
 
 ```bash
-gcloud functions deploy klipstream-analysis \
-    --runtime python39 \
-    --trigger-http \
-    --allow-unauthenticated \
-    --entry-point run_pipeline \
-    --env-vars-file .env.yaml
+./deploy_cloud_function.sh
 ```
+
+This script:
+1. Reads configuration from `.env.yaml`
+2. Deploys a 2nd generation Cloud Function with:
+   - 16GB memory
+   - 60-minute timeout
+   - HTTP trigger
+   - `run_pipeline` entry point
+3. Configures the service account with necessary permissions
+
+### Cloud Function Limitations
+
+When deploying as a Cloud Function, be aware of these limitations:
+
+- **Execution Time**: Maximum 60 minutes (3600 seconds)
+- **Memory**: Maximum 16GB RAM
+- **Disk Space**: Maximum 10GB in `/tmp` directory
+- **Cold Starts**: Functions that are not frequently used may experience cold starts
+- **Concurrency**: Limited ability to handle multiple concurrent requests
+
+For longer or more resource-intensive workloads, consider using Cloud Run instead.
 
 For more detailed deployment instructions, see [decision_docs/DEPLOYMENT.md](decision_docs/DEPLOYMENT.md).

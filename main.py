@@ -21,6 +21,7 @@ import atexit
 import os
 import time
 import argparse
+import yaml
 import functions_framework
 from dotenv import load_dotenv
 
@@ -35,8 +36,19 @@ from raw_pipeline import process_raw_files
 # Import analysis pipeline
 from analysis_pipeline import process_analysis
 
-# Load environment variables
+# Load environment variables from .env file
 load_dotenv()
+
+# Load environment variables from .env.yaml file
+# This is important for Cloud Functions deployment
+try:
+    if os.path.exists('.env.yaml'):
+        with open('.env.yaml', 'r') as f:
+            yaml_env = yaml.safe_load(f)
+            for key, value in yaml_env.items():
+                os.environ[key] = str(value)
+except Exception as e:
+    print(f"Error loading .env.yaml: {str(e)}")
 
 # Set up logger
 logger = setup_logger("main", "main.log")
@@ -57,79 +69,89 @@ atexit.register(cleanup)
 async def run_integrated_pipeline(url):
     """
     Run the integrated pipeline (raw + analysis) for a Twitch VOD URL
-    
+
     Args:
         url (str): Twitch VOD URL
-        
+
     Returns:
         dict: Results of the pipeline execution
     """
     start_time = time.time()
     stage_times = {}
-    
+
     try:
         # Extract video ID
         video_id = extract_video_id(url)
         logger.info(f"Starting integrated pipeline for video ID: {video_id}")
-        
+
+        # Check if running in Cloud Functions environment
+        is_cloud_function = os.environ.get('K_SERVICE') is not None
+
+        # Use /tmp directory for Cloud Functions, otherwise use current directory
+        base_dir = Path("/tmp") if is_cloud_function else Path(".")
+        logger.info(f"Using base directory: {base_dir}")
+
         # Create required directories
-        output_dir = Path("output")
+        output_dir = base_dir / "output"
         output_dir.mkdir(exist_ok=True, parents=True)
-        
-        data_dir = Path("data")
+
+        data_dir = base_dir / "data"
         data_dir.mkdir(exist_ok=True, parents=True)
-        
-        downloads_dir = Path("downloads")
+
+        downloads_dir = base_dir / "downloads"
         downloads_dir.mkdir(exist_ok=True, parents=True)
-        
+
+        # Create all necessary subdirectories
+        create_directories()
+
         # STAGE 1: Raw Pipeline
         logger.info("STAGE 1: Starting Raw Pipeline")
         raw_start = time.time()
-        
+
         try:
             raw_result = await process_raw_files(url)
             if not raw_result or raw_result.get("status") != "completed":
                 raise RuntimeError("Raw pipeline failed to complete successfully")
-                
+
             raw_end = time.time()
             raw_duration = raw_end - raw_start
             stage_times["raw_pipeline"] = raw_duration
             logger.info(f"Raw pipeline completed in {raw_duration:.2f} seconds")
-            
+
             # Extract necessary information from raw pipeline result
             video_id = raw_result["video_id"]
             files = raw_result["files"]
             twitch_info = raw_result.get("twitch_info", {})
-            
+
             logger.info(f"Raw files processed for video ID: {video_id}")
             logger.info(f"Generated files: {list(files.keys())}")
-            
+
         except Exception as e:
             logger.error(f"Raw pipeline failed: {str(e)}")
             raise
-        
+
         # STAGE 2: Analysis Pipeline
         logger.info("STAGE 2: Starting Analysis Pipeline")
         analysis_start = time.time()
-        
+
         try:
             analysis_result = await process_analysis(video_id)
             if not analysis_result or analysis_result.get("status") != "completed":
                 raise RuntimeError("Analysis pipeline failed to complete successfully")
-                
+
             analysis_end = time.time()
             analysis_duration = analysis_end - analysis_start
             stage_times["analysis_pipeline"] = analysis_duration
             logger.info(f"Analysis pipeline completed in {analysis_duration:.2f} seconds")
-            
+
         except Exception as e:
             logger.error(f"Analysis pipeline failed: {str(e)}")
             raise
-        
+
         # Calculate total time
         end_time = time.time()
         total_duration = end_time - start_time
-        
+
         # Generate summary report
         logger.info("=" * 50)
         logger.info("PIPELINE EXECUTION SUMMARY")
@@ -139,7 +161,7 @@ async def run_integrated_pipeline(url):
         logger.info(f"Analysis Pipeline: {stage_times.get('analysis_pipeline', 0):.2f} seconds")
         logger.info(f"Total Execution Time: {total_duration:.2f} seconds")
         logger.info("=" * 50)
-        
+
         return {
             "status": "completed",
             "video_id": video_id,
@@ -148,14 +170,14 @@ async def run_integrated_pipeline(url):
             "stage_times": stage_times,
             "total_duration": total_duration
         }
-        
+
     except Exception as e:
         logger.error(f"Integrated pipeline failed: {str(e)}")
         logger.exception("Full exception details:")
-        
+
         end_time = time.time()
         total_duration = end_time - start_time
-        
+
         return {
             "status": "failed",
             "error": str(e),
@@ -175,10 +197,10 @@ def run_pipeline(request):
             return 'No url provided', 400
 
         url = request_json['url']
-        
+
         # Run the integrated pipeline
         result = asyncio.run(run_integrated_pipeline(url))
-        
+
         return {
             "status": result.get("status", "failed"),
             "result": result
@@ -268,14 +290,14 @@ if __name__ == "__main__":
     try:
         # Run the integrated pipeline
         result = asyncio.run(run_integrated_pipeline(args.url))
-        
+
         if result.get("status") == "completed":
             print(f"Pipeline completed successfully for video ID: {result.get('video_id')}")
             print(f"Total execution time: {result.get('total_duration', 0):.2f} seconds")
         else:
             print(f"Pipeline failed: {result.get('error', 'Unknown error')}")
             exit(1)
-            
+
     except KeyboardInterrupt:
         print("Process interrupted by user")
         exit(1)

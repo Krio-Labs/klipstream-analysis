@@ -22,13 +22,20 @@ try:
 except Exception as e:
     print(f"Error loading .env.yaml: {str(e)}")
 
-# Base directories
-OUTPUT_DIR = Path("output")
+# Check if running in Cloud Functions environment
+IS_CLOUD_FUNCTION = os.environ.get('K_SERVICE') is not None
+
+# Base directories - use /tmp for Cloud Functions
+BASE_DIR = Path("/tmp") if IS_CLOUD_FUNCTION else Path(".")
+OUTPUT_DIR = BASE_DIR / "output"
 RAW_DIR = OUTPUT_DIR / "Raw"
-DOWNLOADS_DIR = Path("downloads")
+DOWNLOADS_DIR = BASE_DIR / "downloads"
 TEMP_DIR = DOWNLOADS_DIR / "temp"
-DATA_DIR = Path("data")
-LOGS_DIR = Path("logs")
+DATA_DIR = BASE_DIR / "data"
+LOGS_DIR = BASE_DIR / "logs"
+
+# Log the base directory being used
+print(f"Using base directory: {BASE_DIR} (Cloud Function: {IS_CLOUD_FUNCTION})")
 
 # Raw file directories
 RAW_VIDEOS_DIR = RAW_DIR / "Videos"
