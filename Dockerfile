@@ -32,9 +32,22 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
+# Download TwitchDownloaderCLI and ffmpeg if they don't exist or are empty
+RUN if [ ! -s /app/raw_pipeline/bin/TwitchDownloaderCLI ]; then \
+        wget -q https://github.com/lay295/TwitchDownloader/releases/download/1.55.0/TwitchDownloaderCLI-Linux-x64.zip -O /tmp/twitch-dl.zip && \
+        unzip /tmp/twitch-dl.zip -d /app/raw_pipeline/bin && \
+        chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI && \
+        rm /tmp/twitch-dl.zip; \
+    fi
+
+RUN if [ ! -s /app/raw_pipeline/bin/ffmpeg ]; then \
+        apt-get update && apt-get install -y ffmpeg && \
+        cp $(which ffmpeg) /app/raw_pipeline/bin/ffmpeg; \
+    fi
+
 # Make sure the binary files are executable
-RUN chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI && \
-    chmod +x /app/raw_pipeline/bin/ffmpeg
+RUN chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI || true && \
+    chmod +x /app/raw_pipeline/bin/ffmpeg || true
 
 # Set environment variables
 ENV PATH="/app/raw_pipeline/bin:${PATH}"
@@ -44,5 +57,12 @@ ENV PORT=8080
 # Create necessary directories
 RUN mkdir -p /tmp/output /tmp/downloads /tmp/data /tmp/logs
 
+# Verify model files exist
+RUN if [ ! -s /app/analysis_pipeline/chat/models/emotion_classifier_pipe_lr.pkl ] || [ ! -s /app/analysis_pipeline/chat/models/highlight_classifier_pipe_lr.pkl ]; then \
+        echo "Warning: Model files are missing or empty. The application may not function correctly."; \
+    else \
+        echo "Model files verified successfully."; \
+    fi
+
 # Use functions-framework to start the function
-CMD exec functions-framework --target=run_pipeline --port=${PORT}
+CMD ["functions-framework", "--target=run_pipeline", "--port=${PORT}"]
