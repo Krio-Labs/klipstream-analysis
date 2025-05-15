@@ -32,13 +32,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Always download TwitchDownloaderCLI and ffmpeg to ensure compatibility
-RUN wget -q https://github.com/lay295/TwitchDownloader/releases/download/1.55.0/TwitchDownloaderCLI-Linux-x64.zip -O /tmp/twitch-dl.zip && \
-    unzip /tmp/twitch-dl.zip -d /app/raw_pipeline/bin && \
-    chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI && \
-    rm /tmp/twitch-dl.zip
+# Install .NET runtime for TwitchDownloaderCLI
+RUN apt-get update && apt-get install -y apt-transport-https && \
+    wget https://packages.microsoft.com/config/debian/11/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
+    dpkg -i packages-microsoft-prod.deb && \
+    rm packages-microsoft-prod.deb && \
+    apt-get update && \
+    apt-get install -y dotnet-runtime-6.0
 
-RUN apt-get update && apt-get install -y ffmpeg && \
+# Use the existing TwitchDownloaderCLI and ffmpeg binaries
+RUN mkdir -p /app/raw_pipeline/bin && \
+    apt-get update && apt-get install -y ffmpeg && \
     cp $(which ffmpeg) /app/raw_pipeline/bin/ffmpeg && \
     chmod +x /app/raw_pipeline/bin/ffmpeg
 
@@ -64,4 +68,4 @@ RUN if [ ! -s /app/analysis_pipeline/chat/models/emotion_classifier_pipe_lr.pkl 
     fi
 
 # Use functions-framework to start the function
-CMD ["functions-framework", "--target=run_pipeline", "--port=8080"]
+CMD functions-framework --target=run_pipeline --port=8080
