@@ -126,13 +126,16 @@ async def process_raw_files(url):
         # Clean up temporary directories
         cleanup_temp_directories()
 
+        # Convert Path objects to strings for JSON serialization
+        from main import convert_paths_to_strings
+
         # Return results
         return {
             "status": "completed",
             "video_id": video_id,
             "twitch_info": download_result.get("twitch_info", {}),
-            "files": files,
-            "uploaded_files": uploaded_files
+            "files": convert_paths_to_strings(files),
+            "uploaded_files": convert_paths_to_strings(uploaded_files)
         }
 
     except Exception as e:

@@ -233,18 +233,21 @@ async def process_analysis(video_id):
             integration_result = False
             # Continue with pipeline even if integration fails
 
+        # Convert Path objects to strings for JSON serialization
+        from main import convert_paths_to_strings
+
         # Return results
         return {
             "status": "completed",
             "video_id": video_id,
-            "audio_sentiment": audio_sentiment_result,
-            "sliding_window": sliding_window_result,
-            "audio_highlights": audio_highlights_result,
-            "audio_plot": audio_plot_result,
-            "chat_sentiment": chat_sentiment_result,
-            "chat_intervals": chat_intervals_result,
-            "chat_highlights": chat_highlights_result,
-            "integration": integration_result
+            "audio_sentiment": convert_paths_to_strings(audio_sentiment_result),
+            "sliding_window": convert_paths_to_strings(sliding_window_result),
+            "audio_highlights": convert_paths_to_strings(audio_highlights_result),
+            "audio_plot": convert_paths_to_strings(audio_plot_result),
+            "chat_sentiment": convert_paths_to_strings(chat_sentiment_result),
+            "chat_intervals": convert_paths_to_strings(chat_intervals_result),
+            "chat_highlights": convert_paths_to_strings(chat_highlights_result),
+            "integration": convert_paths_to_strings(integration_result)
         }
 
     except Exception as e:

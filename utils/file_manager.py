@@ -213,14 +213,16 @@ class FileManager:
 
         return None
 
-    def download_from_gcs(self, file_type: str, max_retries: int = 3, retry_delay: int = 5) -> bool:
+    def download_from_gcs(self, file_type: str, max_retries: int = 3, retry_delay: int = 5,
+                       chunk_size: int = 5 * 1024 * 1024) -> bool:
         """
-        Download a file from GCS to local storage with retry logic.
+        Download a file from GCS to local storage with retry logic and chunked downloads.
 
         Args:
             file_type (str): Type of file (video, audio, transcript, etc.)
             max_retries (int, optional): Maximum number of retry attempts. Defaults to 3.
             retry_delay (int, optional): Delay between retries in seconds. Defaults to 5.
+            chunk_size (int, optional): Size of chunks for large file downloads in bytes. Defaults to 5MB.
 
         Returns:
             bool: True if download was successful, False otherwise
@@ -230,6 +232,7 @@ class FileManager:
 
         try:
             from google.cloud import storage
+            from google.cloud.exceptions import GoogleCloudError
 
             local_path = self.get_local_path(file_type)
             gcs_path = self.get_gcs_path(file_type)
@@ -240,24 +243,73 @@ class FileManager:
 
             client = storage.Client(project=GCS_PROJECT)
             bucket = client.bucket(bucket_name)
-            blob = bucket.blob(gcs_path)
 
-            # Check if blob exists
-            if not blob.exists():
-                logger.warning(f"File {gcs_path} does not exist in bucket {bucket_name}")
-                return False
-
-            # Ensure directory exists
-            local_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Try to download with retries
+            # Try to download with retries and exponential backoff
             for attempt in range(max_retries):
                 try:
-                    blob.download_to_filename(local_path)
-                    logger.info(f"Downloaded {gcs_path} to {local_path}")
-                    return True
+                    # Get blob with appropriate chunk size for large files
+                    blob = bucket.blob(gcs_path, chunk_size=chunk_size)
+
+                    # Check if blob exists
+                    if not blob.exists():
+                        logger.warning(f"File {gcs_path} does not exist in bucket {bucket_name}")
+                        return False
+
+                    # Get blob size for logging and timeout calculation
+                    blob.reload()
+                    file_size = blob.size if hasattr(blob, 'size') else 0
+                    logger.info(f"Downloading file {gcs_path} ({file_size/1024/1024:.2f} MB) to {local_path}")
+
+                    # Ensure directory exists
+                    local_path.parent.mkdir(parents=True, exist_ok=True)
+
+                    # Set timeout based on file size
+                    timeout = max(300, int(file_size / (100 * 1024)))  # Scale timeout with file size
+
+                    # Download with appropriate settings
+                    blob.download_to_filename(
+                        local_path,
+                        timeout=timeout,
+                        retry=storage.retry.Retry(
+                            initial=1.0,
+                            maximum=60.0,
+                            multiplier=2.0,
+                            deadline=timeout
+                        )
+                    )
+
+                    # Verify file was downloaded correctly
+                    if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
+                        logger.info(f"Successfully downloaded {gcs_path} to {local_path}")
+                        return True
+                    else:
+                        raise Exception("Downloaded file is empty or does not exist")
+
+                except GoogleCloudError as e:
+                    # Handle specific Google Cloud errors
+                    logger.warning(f"Download attempt {attempt+1} failed with Google Cloud error: {str(e)}")
+                    if "Broken pipe" in str(e) or "Connection reset" in str(e) or "timed out" in str(e):
+                        # Network errors - retry with longer delay
+                        retry_delay = min(retry_delay * 2, 60)  # Exponential backoff, max 60 seconds
+
+                    if attempt < max_retries - 1:
+                        logger.info(f"Retrying in {retry_delay} seconds...")
+                        time.sleep(retry_delay)
+                    else:
+                        logger.error(f"All {max_retries} download attempts failed")
+                        return False
+
                 except Exception as e:
                     logger.warning(f"Download attempt {attempt+1} failed: {str(e)}")
+
+                    # Clean up partial downloads
+                    if os.path.exists(local_path):
+                        try:
+                            os.remove(local_path)
+                            logger.info(f"Removed partial download: {local_path}")
+                        except Exception as cleanup_error:
+                            logger.warning(f"Failed to clean up partial download: {str(cleanup_error)}")
+
                     if attempt < max_retries - 1:
                         logger.info(f"Retrying in {retry_delay} seconds...")
                         time.sleep(retry_delay)
@@ -269,14 +321,16 @@ class FileManager:
             logger.error(f"Error downloading from GCS: {str(e)}")
             return False
 
-    def upload_to_gcs(self, file_type: str, max_retries: int = 3, retry_delay: int = 5) -> bool:
+    def upload_to_gcs(self, file_type: str, max_retries: int = 3, retry_delay: int = 5,
+                    chunk_size: int = 5 * 1024 * 1024) -> bool:
         """
-        Upload a file to GCS with retry logic.
+        Upload a file to GCS with retry logic and chunked uploads for large files.
 
         Args:
             file_type (str): Type of file (video, audio, transcript, etc.)
             max_retries (int, optional): Maximum number of retry attempts. Defaults to 3.
             retry_delay (int, optional): Delay between retries in seconds. Defaults to 5.
+            chunk_size (int, optional): Size of chunks for large file uploads in bytes. Defaults to 5MB.
 
         Returns:
             bool: True if upload was successful, False otherwise
@@ -286,6 +340,7 @@ class FileManager:
 
         try:
             from google.cloud import storage
+            from google.cloud.exceptions import GoogleCloudError
 
             local_path = self.get_local_path(file_type)
             gcs_path = self.get_gcs_path(file_type)
@@ -299,16 +354,58 @@ class FileManager:
                 logger.warning(f"Local file {local_path} does not exist")
                 return False
 
+            # Get file size
+            file_size = os.path.getsize(local_path)
+            logger.info(f"Uploading file {local_path} ({file_size/1024/1024:.2f} MB) to {bucket_name}/{gcs_path}")
+
             client = storage.Client(project=GCS_PROJECT)
             bucket = client.bucket(bucket_name)
-            blob = bucket.blob(gcs_path)
 
-            # Try to upload with retries
+            # Large files will use resumable uploads automatically
+
+            # Try to upload with retries and exponential backoff
             for attempt in range(max_retries):
                 try:
-                    blob.upload_from_filename(local_path)
-                    logger.info(f"Uploaded {local_path} to {bucket_name}/{gcs_path}")
+                    # For large files, use resumable uploads with chunking
+                    if file_size > 10 * 1024 * 1024:  # 10MB threshold for chunked upload
+                        blob = bucket.blob(gcs_path, chunk_size=chunk_size)
+                        logger.info(f"Using chunked upload with {chunk_size/1024/1024:.2f}MB chunks")
+                    else:
+                        blob = bucket.blob(gcs_path)
+
+                    # Set timeout for large files
+                    timeout = max(300, int(file_size / (100 * 1024)))  # Scale timeout with file size
+
+                    # Upload with appropriate settings
+                    blob.upload_from_filename(
+                        local_path,
+                        timeout=timeout,
+                        if_generation_match=None,  # Avoid generation matching errors
+                        retry=storage.retry.Retry(
+                            initial=1.0,
+                            maximum=60.0,
+                            multiplier=2.0,
+                            deadline=timeout
+                        )
+                    )
+
+                    logger.info(f"Successfully uploaded {local_path} to {bucket_name}/{gcs_path}")
                     return True
+
+                except GoogleCloudError as e:
+                    # Handle specific Google Cloud errors
+                    logger.warning(f"Upload attempt {attempt+1} failed with Google Cloud error: {str(e)}")
+                    if "Broken pipe" in str(e) or "Connection reset" in str(e) or "timed out" in str(e):
+                        # Network errors - retry with longer delay
+                        retry_delay = min(retry_delay * 2, 60)  # Exponential backoff, max 60 seconds
+
+                    if attempt < max_retries - 1:
+                        logger.info(f"Retrying in {retry_delay} seconds...")
+                        time.sleep(retry_delay)
+                    else:
+                        logger.error(f"All {max_retries} upload attempts failed")
+                        return False
+
                 except Exception as e:
                     logger.warning(f"Upload attempt {attempt+1} failed: {str(e)}")
                     if attempt < max_retries - 1:
