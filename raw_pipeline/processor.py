@@ -17,6 +17,7 @@ from utils.config import (
     DATA_DIR
 )
 from utils.logging_setup import setup_logger
+from utils.file_manager import FileManager
 
 from .downloader import TwitchVideoDownloader
 from .transcriber import TranscriptionHandler
@@ -103,12 +104,21 @@ async def process_raw_files(url):
 
             # Add segments file to files dictionary if sliding window generation was successful
             if sliding_window_result:
-                segments_file = Path(f"output/Raw/Transcripts/audio_{video_id}_segments.csv")
-                if segments_file.exists():
+                # Use file manager to get the segments file path
+                file_manager = FileManager(video_id)
+                segments_file = file_manager.get_local_path("segments")
+
+                if segments_file and segments_file.exists():
                     files["segments_file"] = segments_file
                     logger.info(f"Added segments file to files dictionary: {segments_file}")
                 else:
-                    logger.warning(f"Segments file not found after generation: {segments_file}")
+                    # Try fallback path for backward compatibility
+                    fallback_path = Path(f"output/Raw/Transcripts/audio_{video_id}_segments.csv")
+                    if fallback_path.exists():
+                        files["segments_file"] = fallback_path
+                        logger.info(f"Added segments file from fallback path to files dictionary: {fallback_path}")
+                    else:
+                        logger.warning(f"Segments file not found after generation")
 
         # Upload files to GCS
         uploaded_files = upload_to_gcs(video_id, files)

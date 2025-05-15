@@ -2300,8 +2300,13 @@ def create_loudness_visualization(video_id, output_dir):
 
             # Fallback to multiple possible paths for backward compatibility
             possible_audio_paths = [
-                f"output/Raw/audio/audio_{video_id}.wav",  # lowercase 'audio'
+                # Try paths with file manager first
+                file_manager.get_local_path("audio"),
+                # Then try various fallback paths for backward compatibility
+                f"/tmp/output/Raw/Audio/audio_{video_id}.wav",
+                f"/tmp/output/Raw/audio/audio_{video_id}.wav",
                 f"output/Raw/Audio/audio_{video_id}.wav",  # uppercase 'Audio'
+                f"output/Raw/audio/audio_{video_id}.wav",  # lowercase 'audio'
                 f"output/Raw/audio_{video_id}.wav",        # directly in Raw
                 f"output/Raw/audio_{video_id}.mp3"         # mp3 format
             ]

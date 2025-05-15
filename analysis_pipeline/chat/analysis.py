@@ -185,15 +185,42 @@ def get_input_files(video_id, output_dir):
     Returns:
         tuple: Paths to (sentiment_csv, segments_csv)
     """
+    # Import here to avoid circular imports
+    from utils.config import USE_GCS
+    from utils.file_manager import FileManager
+
+    # Initialize file manager
+    file_manager = FileManager(video_id)
+
     output_dir = Path(output_dir)
     sentiment_csv = output_dir / f"{video_id}_chat_sentiment.csv"
-    segments_csv = Path(f'output/Raw/Transcripts/audio_{video_id}_segments.csv')
+
+    # Try to get the segments file using the file manager
+    segments_csv = file_manager.get_file_path("segments")
+
+    # If file manager couldn't find the segments file, try fallback paths
+    if segments_csv is None or not os.path.exists(segments_csv):
+        # Try alternative paths
+        tmp_path = Path(f'/tmp/output/Raw/Transcripts/audio_{video_id}_segments.csv')
+        alt_path = Path(f'output/Raw/Transcripts/audio_{video_id}_segments.csv')
+
+        if os.path.exists(tmp_path):
+            segments_csv = tmp_path
+            logger.info(f"Using segments file from tmp path: {segments_csv}")
+        elif os.path.exists(alt_path):
+            segments_csv = alt_path
+            logger.info(f"Using segments file from alternative path: {segments_csv}")
+        else:
+            # Try to download from GCS as a last resort
+            if USE_GCS and file_manager.download_from_gcs("segments"):
+                segments_csv = file_manager.get_local_path("segments")
+                logger.info(f"Downloaded segments file from GCS: {segments_csv}")
 
     # Verify files exist
     if not os.path.exists(sentiment_csv):
         raise FileNotFoundError(f"Chat sentiment file not found: {sentiment_csv}")
-    if not os.path.exists(segments_csv):
-        raise FileNotFoundError(f"Sliding window segments file not found: {segments_csv}")
+    if not segments_csv or not os.path.exists(segments_csv):
+        raise FileNotFoundError(f"Sliding window segments file not found")
 
     return sentiment_csv, segments_csv
 
