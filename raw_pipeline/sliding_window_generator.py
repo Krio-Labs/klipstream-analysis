@@ -43,6 +43,11 @@ def generate_sliding_windows(video_id, window_size=60, overlap=30, base_dir=None
     paragraphs_file = file_manager.get_file_path("paragraphs")
     segments_file = file_manager.get_local_path("segments")
 
+    # Log the paths we're using
+    logger.info(f"Using words file: {words_file}")
+    logger.info(f"Using paragraphs file: {paragraphs_file}")
+    logger.info(f"Will save segments file to: {segments_file}")
+
     # Ensure output directory exists
     if segments_file:
         segments_file.parent.mkdir(parents=True, exist_ok=True)

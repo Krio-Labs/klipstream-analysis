@@ -34,6 +34,13 @@ def plot_metrics(output_dir, video_id):
         bool: True if plotting was successful, False otherwise
     """
     try:
+        # Import here to avoid circular imports
+        from utils.config import BASE_DIR, USE_GCS
+        from utils.file_manager import FileManager
+
+        # Initialize file manager
+        file_manager = FileManager(video_id)
+
         # Create output directory if it doesn't exist
         output_dir = Path(output_dir)
         os.makedirs(output_dir, exist_ok=True)
@@ -44,8 +51,13 @@ def plot_metrics(output_dir, video_id):
         # Also check for sentiment file in test_output directory (for testing)
         test_sentiment_file = Path(f"test_output/audio_{video_id}_sentiment.csv")
 
-        # Then try the segments file as fallback
-        segments_file = Path(f'output/Raw/Transcripts/audio_{video_id}_segments.csv')
+        # Try to get the segments file using the file manager
+        segments_file = file_manager.get_file_path("segments")
+
+        # Log the paths we're checking
+        logger.info(f"Checking sentiment file: {sentiment_file}")
+        logger.info(f"Checking test sentiment file: {test_sentiment_file}")
+        logger.info(f"Checking segments file: {segments_file}")
 
         # Check which file exists and use it
         if sentiment_file.exists():
@@ -54,11 +66,27 @@ def plot_metrics(output_dir, video_id):
         elif test_sentiment_file.exists():
             file_path = test_sentiment_file
             logger.info(f"Using sentiment file from test directory: {file_path}")
-        elif segments_file.exists():
+        elif segments_file and segments_file.exists():
             file_path = segments_file
-            logger.info(f"Using segments file from Raw directory: {file_path}")
+            logger.info(f"Using segments file from file manager: {file_path}")
         else:
-            raise FileNotFoundError(f"Could not find sentiment or segments file for video ID: {video_id}")
+            # Try alternative paths for segments file
+            alt_segments_file = Path(f'output/Raw/Transcripts/audio_{video_id}_segments.csv')
+            tmp_segments_file = Path(f'/tmp/output/Raw/Transcripts/audio_{video_id}_segments.csv')
+
+            if alt_segments_file.exists():
+                file_path = alt_segments_file
+                logger.info(f"Using segments file from alternative path: {file_path}")
+            elif tmp_segments_file.exists():
+                file_path = tmp_segments_file
+                logger.info(f"Using segments file from tmp path: {file_path}")
+            else:
+                # Try to download from GCS as a last resort
+                if USE_GCS and file_manager.download_from_gcs("segments"):
+                    file_path = file_manager.get_local_path("segments")
+                    logger.info(f"Downloaded segments file from GCS: {file_path}")
+                else:
+                    raise FileNotFoundError(f"Could not find sentiment or segments file for video ID: {video_id}")
 
         df = pd.read_csv(file_path)
 
@@ -91,14 +119,31 @@ def plot_metrics(output_dir, video_id):
             has_nebius_features = all(col in df.columns for col in ['speech_rate', 'absolute_intensity', 'relative_intensity'])
 
             # Even if we have pre-calculated metrics, we still need to load the audio file for the waveform plot
-            # Look for the audio file in the output directory
-            audio_path = Path(f'output/Raw/Audio/audio_{video_id}.wav')
+            # Try to get the audio file using the file manager
+            audio_path = file_manager.get_file_path("audio")
 
-            if os.path.exists(audio_path):
+            if audio_path and os.path.exists(audio_path):
                 y, sr = librosa.load(audio_path)
-                logger.info(f"Using audio file from: {audio_path}")
+                logger.info(f"Using audio file from file manager: {audio_path}")
             else:
-                raise FileNotFoundError(f"Could not find audio file in {audio_path}")
+                # Try alternative paths
+                alt_audio_path = Path(f'output/Raw/Audio/audio_{video_id}.wav')
+                tmp_audio_path = Path(f'/tmp/output/Raw/Audio/audio_{video_id}.wav')
+
+                if os.path.exists(alt_audio_path):
+                    y, sr = librosa.load(alt_audio_path)
+                    logger.info(f"Using audio file from alternative path: {alt_audio_path}")
+                elif os.path.exists(tmp_audio_path):
+                    y, sr = librosa.load(tmp_audio_path)
+                    logger.info(f"Using audio file from tmp path: {tmp_audio_path}")
+                else:
+                    # Try to download from GCS as a last resort
+                    if USE_GCS and file_manager.download_from_gcs("audio"):
+                        audio_path = file_manager.get_local_path("audio")
+                        y, sr = librosa.load(audio_path)
+                        logger.info(f"Downloaded audio file from GCS: {audio_path}")
+                    else:
+                        raise FileNotFoundError(f"Could not find audio file for video ID: {video_id}")
 
             times = np.arange(len(y)) / sr
 
@@ -272,6 +317,13 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
         pd.DataFrame: DataFrame containing the top highlights, or None if analysis failed
     """
     try:
+        # Import here to avoid circular imports
+        from utils.config import BASE_DIR, USE_GCS
+        from utils.file_manager import FileManager
+
+        # Initialize file manager
+        file_manager = FileManager(video_id)
+
         # Define output directory
         if output_dir is None:
             output_dir = Path('output/Analysis/Audio')
@@ -282,9 +334,30 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
 
         # Determine input file path
         if input_file is None:
-            input_file = Path(f'output/Raw/Transcripts/audio_{video_id}_segments.csv')
+            # Try to get the segments file using the file manager
+            input_file = file_manager.get_file_path("segments")
+            if input_file is None:
+                # Try alternative paths
+                tmp_path = Path(f'/tmp/output/Raw/Transcripts/audio_{video_id}_segments.csv')
+                alt_path = Path(f'output/Raw/Transcripts/audio_{video_id}_segments.csv')
+
+                if os.path.exists(tmp_path):
+                    input_file = tmp_path
+                    logger.info(f"Using segments file from tmp path: {input_file}")
+                elif os.path.exists(alt_path):
+                    input_file = alt_path
+                    logger.info(f"Using segments file from alternative path: {input_file}")
+                else:
+                    # Try to download from GCS as a last resort
+                    if USE_GCS and file_manager.download_from_gcs("segments"):
+                        input_file = file_manager.get_local_path("segments")
+                        logger.info(f"Downloaded segments file from GCS: {input_file}")
+                    else:
+                        logger.error(f"Could not find or download segments file for video ID: {video_id}")
+                        return None
         else:
             input_file = Path(input_file)
+            logger.info(f"Using provided input file: {input_file}")
 
         # Check if file exists
         if not os.path.exists(input_file):
@@ -313,18 +386,35 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
             logger.info("Pre-calculated audio metrics not found, calculating from audio file")
 
             try:
-                # Try to find the audio file in multiple locations
-                audio_path = Path(f'output/Raw/Audio/audio_{video_id}.wav')
-                tmp_audio_path = Path(f'/tmp/outputs/audio_{video_id}.wav')
+                # Try to get the audio file using the file manager
+                audio_path = file_manager.get_file_path("audio")
 
-                if os.path.exists(audio_path):
+                if audio_path and os.path.exists(audio_path):
                     y, sr = librosa.load(audio_path)
-                    logger.info(f"Using audio file from: {audio_path}")
-                elif os.path.exists(tmp_audio_path):
-                    y, sr = librosa.load(tmp_audio_path)
-                    logger.info(f"Using audio file from: {tmp_audio_path}")
+                    logger.info(f"Using audio file from file manager: {audio_path}")
                 else:
-                    raise FileNotFoundError(f"Could not find audio file in {audio_path} or {tmp_audio_path}")
+                    # Try alternative paths
+                    alt_audio_path = Path(f'output/Raw/Audio/audio_{video_id}.wav')
+                    tmp_audio_path = Path(f'/tmp/output/Raw/Audio/audio_{video_id}.wav')
+                    tmp_outputs_path = Path(f'/tmp/outputs/audio_{video_id}.wav')
+
+                    if os.path.exists(alt_audio_path):
+                        y, sr = librosa.load(alt_audio_path)
+                        logger.info(f"Using audio file from alternative path: {alt_audio_path}")
+                    elif os.path.exists(tmp_audio_path):
+                        y, sr = librosa.load(tmp_audio_path)
+                        logger.info(f"Using audio file from tmp path: {tmp_audio_path}")
+                    elif os.path.exists(tmp_outputs_path):
+                        y, sr = librosa.load(tmp_outputs_path)
+                        logger.info(f"Using audio file from tmp outputs path: {tmp_outputs_path}")
+                    else:
+                        # Try to download from GCS as a last resort
+                        if USE_GCS and file_manager.download_from_gcs("audio"):
+                            audio_path = file_manager.get_local_path("audio")
+                            y, sr = librosa.load(audio_path)
+                            logger.info(f"Downloaded audio file from GCS: {audio_path}")
+                        else:
+                            raise FileNotFoundError(f"Could not find audio file for video ID: {video_id}")
 
                 # Calculate audio features
                 frame_length = int(sr * 0.03)  # 30ms frames

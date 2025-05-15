@@ -28,7 +28,8 @@ from dotenv import load_dotenv
 # Import utilities
 from utils.logging_setup import setup_logger
 from utils.helpers import extract_video_id
-from utils.config import create_directories
+from utils.config import create_directories, BASE_DIR, USE_GCS
+from utils.file_manager import FileManager
 
 # Import raw file processor from reorganized structure
 from raw_pipeline import process_raw_files
@@ -84,21 +85,21 @@ async def run_integrated_pipeline(url):
         video_id = extract_video_id(url)
         logger.info(f"Starting integrated pipeline for video ID: {video_id}")
 
-        # Check if running in Cloud Functions environment
-        is_cloud_function = os.environ.get('K_SERVICE') is not None
+        # Initialize file manager
+        file_manager = FileManager(video_id)
 
-        # Use /tmp directory for Cloud Functions, otherwise use current directory
-        base_dir = Path("/tmp") if is_cloud_function else Path(".")
-        logger.info(f"Using base directory: {base_dir}")
+        # Log configuration
+        logger.info(f"Using base directory: {BASE_DIR}")
+        logger.info(f"Using GCS for file storage: {USE_GCS}")
 
         # Create required directories
-        output_dir = base_dir / "output"
+        output_dir = BASE_DIR / "output"
         output_dir.mkdir(exist_ok=True, parents=True)
 
-        data_dir = base_dir / "data"
+        data_dir = BASE_DIR / "data"
         data_dir.mkdir(exist_ok=True, parents=True)
 
-        downloads_dir = base_dir / "downloads"
+        downloads_dir = BASE_DIR / "downloads"
         downloads_dir.mkdir(exist_ok=True, parents=True)
 
         # Create all necessary subdirectories
