@@ -5,6 +5,7 @@ This module orchestrates the analysis of raw files for Twitch VODs.
 """
 
 import os
+import time
 import concurrent.futures
 import subprocess
 import pandas as pd
@@ -12,11 +13,14 @@ from pathlib import Path
 
 from utils.logging_setup import setup_logger
 from utils.config import (
+    BASE_DIR,
     RAW_TRANSCRIPTS_DIR,
     RAW_AUDIO_DIR,
     RAW_CHAT_DIR,
-    ANALYSIS_DIR
+    ANALYSIS_DIR,
+    USE_GCS
 )
+from utils.file_manager import FileManager
 
 from .audio.sentiment_nebius import analyze_audio_sentiment
 from .audio.analysis import analyze_transcription_highlights, plot_metrics
@@ -46,6 +50,9 @@ async def process_analysis(video_id):
         dict: Dictionary with results and metadata
     """
     try:
+        # Initialize file manager
+        file_manager = FileManager(video_id)
+
         # Create analysis directory if it doesn't exist
         os.makedirs(ANALYSIS_DIR, exist_ok=True)
 
@@ -55,19 +62,31 @@ async def process_analysis(video_id):
         os.makedirs(audio_analysis_dir, exist_ok=True)
         os.makedirs(chat_analysis_dir, exist_ok=True)
 
-        # Check if required raw files exist
-        transcript_file = RAW_TRANSCRIPTS_DIR / f"audio_{video_id}_segments.csv"
-        audio_file = RAW_AUDIO_DIR / f"audio_{video_id}.wav"
-        chat_file = RAW_CHAT_DIR / f"{video_id}_chat.csv"
+        # Get file paths with automatic download from GCS if needed
+        transcript_file = file_manager.get_file_path("segments")
+        audio_file = file_manager.get_file_path("audio")
+        chat_file = file_manager.get_file_path("chat")
 
-        if not transcript_file.exists():
-            raise FileNotFoundError(f"Transcript file not found: {transcript_file}")
+        # Check if required files exist or could be downloaded
+        if not transcript_file:
+            error_msg = f"Transcript file not found for video ID: {video_id}"
+            logger.error(error_msg)
+            return {"status": "failed", "error": error_msg}
 
-        if not audio_file.exists():
-            raise FileNotFoundError(f"Audio file not found: {audio_file}")
+        if not audio_file:
+            error_msg = f"Audio file not found for video ID: {video_id}"
+            logger.error(error_msg)
+            return {"status": "failed", "error": error_msg}
 
-        if not chat_file.exists():
-            raise FileNotFoundError(f"Chat file not found: {chat_file}")
+        if not chat_file:
+            error_msg = f"Chat file not found for video ID: {video_id}"
+            logger.error(error_msg)
+            return {"status": "failed", "error": error_msg}
+
+        logger.info(f"All required files found or downloaded successfully")
+        logger.info(f"Transcript file: {transcript_file}")
+        logger.info(f"Audio file: {audio_file}")
+        logger.info(f"Chat file: {chat_file}")
 
         # Process chat data first
         logger.info("Step 1: Processing chat data")
@@ -133,16 +152,49 @@ async def process_analysis(video_id):
             audio_sentiment_result = audio_sentiment_future.result()
 
             # Check if sliding window segments file already exists
-            segments_file = RAW_TRANSCRIPTS_DIR / f"audio_{video_id}_segments.csv"
-            if segments_file.exists():
-                logger.info(f"Sliding window segments file already exists: {segments_file}")
+            # We already checked this at the beginning, but double-check in case it was deleted
+            if file_manager.file_exists_locally("segments"):
+                logger.info(f"Sliding window segments file already exists")
                 sliding_window_future = executor.submit(lambda: True)  # Return True without running the generator
             else:
-                # Run sliding window analysis only if the file doesn't exist
+                # Run sliding window analysis with the file manager
                 logger.info("Step 5: Running sliding window analysis")
                 sliding_window_future = executor.submit(
-                    lambda: subprocess.run(["python", "sliding_window_generator.py", video_id, "60", "30"], check=True)
+                    lambda: subprocess.run(
+                        ["python", "raw_pipeline/sliding_window_generator.py", video_id, "60", "30"],
+                        check=True
+                    )
                 )
+
+                # Add retry logic for sliding window generation
+                max_retries = 3
+                retry_count = 0
+                sliding_window_success = False
+
+                while retry_count < max_retries and not sliding_window_success:
+                    try:
+                        sliding_window_result = sliding_window_future.result()
+                        sliding_window_success = True
+                    except Exception as e:
+                        retry_count += 1
+                        logger.warning(f"Sliding window generation failed (attempt {retry_count}/{max_retries}): {str(e)}")
+                        if retry_count < max_retries:
+                            logger.info(f"Retrying sliding window generation in 5 seconds...")
+                            time.sleep(5)
+                            sliding_window_future = executor.submit(
+                                lambda: subprocess.run(
+                                    ["python", "raw_pipeline/sliding_window_generator.py", video_id, "60", "30"],
+                                    check=True
+                                )
+                            )
+                        else:
+                            logger.error(f"All {max_retries} attempts to generate sliding windows failed")
+                            # Try to download from GCS as a last resort
+                            if USE_GCS and file_manager.download_from_gcs("segments"):
+                                logger.info(f"Downloaded segments file from GCS as fallback")
+                                sliding_window_success = True
+                            else:
+                                logger.error("Could not generate or download segments file, analysis may fail")
 
             # Analyze audio transcription highlights
             logger.info("Step 6: Analyzing audio transcription highlights")

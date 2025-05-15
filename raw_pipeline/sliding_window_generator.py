@@ -14,12 +14,15 @@ import os
 import sys
 import pandas as pd
 import numpy as np
+from pathlib import Path
 from utils.logging_setup import setup_logger
+from utils.config import BASE_DIR, USE_GCS
+from utils.file_manager import FileManager
 
 # Set up logger
 logger = setup_logger("sliding_window_generator", "sliding_window.log")
 
-def generate_sliding_windows(video_id, window_size=60, overlap=30):
+def generate_sliding_windows(video_id, window_size=60, overlap=30, base_dir=None):
     """
     Generate sliding windows from transcript data
 
@@ -27,26 +30,41 @@ def generate_sliding_windows(video_id, window_size=60, overlap=30):
         video_id (str): The video ID to process
         window_size (int): Size of each window in seconds
         overlap (int): Overlap between consecutive windows in seconds
+        base_dir (Path, optional): Base directory for files. Defaults to config.BASE_DIR.
 
     Returns:
         bool: True if successful, False otherwise
     """
-    # Define file paths
-    words_file = f"output/Raw/Transcripts/audio_{video_id}_words.csv"
-    paragraphs_file = f"output/Raw/Transcripts/audio_{video_id}_paragraphs.csv"
-    segments_file = f"output/Raw/Transcripts/audio_{video_id}_segments.csv"
+    # Initialize file manager
+    file_manager = FileManager(video_id, base_dir)
+
+    # Get file paths
+    words_file = file_manager.get_file_path("words")
+    paragraphs_file = file_manager.get_file_path("paragraphs")
+    segments_file = file_manager.get_local_path("segments")
 
     # Ensure output directory exists
-    os.makedirs(os.path.dirname(segments_file), exist_ok=True)
+    if segments_file:
+        segments_file.parent.mkdir(parents=True, exist_ok=True)
 
     # Check if files exist
-    if not os.path.exists(words_file):
+    if not words_file or not words_file.exists():
         logger.error(f"Words file not found: {words_file}")
-        return False
+        # Try to download from GCS if enabled
+        if USE_GCS and file_manager.download_from_gcs("words"):
+            words_file = file_manager.get_local_path("words")
+            logger.info(f"Downloaded words file from GCS: {words_file}")
+        else:
+            return False
 
-    if not os.path.exists(paragraphs_file):
+    if not paragraphs_file or not paragraphs_file.exists():
         logger.error(f"Paragraphs file not found: {paragraphs_file}")
-        return False
+        # Try to download from GCS if enabled
+        if USE_GCS and file_manager.download_from_gcs("paragraphs"):
+            paragraphs_file = file_manager.get_local_path("paragraphs")
+            logger.info(f"Downloaded paragraphs file from GCS: {paragraphs_file}")
+        else:
+            return False
 
     try:
         # Load transcript data
@@ -186,6 +204,14 @@ def generate_sliding_windows(video_id, window_size=60, overlap=30):
         # Save sliding windows to segments file
         logger.info(f"Saving {len(windows_df)} sliding windows to segments file: {segments_file}")
         windows_df.to_csv(segments_file, index=False)
+
+        # Upload to GCS if enabled
+        if USE_GCS:
+            if file_manager.upload_to_gcs("segments"):
+                logger.info(f"Uploaded segments file to GCS: {segments_file}")
+            else:
+                logger.warning(f"Failed to upload segments file to GCS: {segments_file}")
+                # Continue anyway, as we have the local file
 
         logger.info("Sliding window generation completed successfully")
         return True

@@ -439,37 +439,41 @@ Transcript:
 
         # Set a timeout for the request
         try:
-            async with asyncio.timeout(timeout):
-                logger.info(f"[{request_id}] Sending request to API for text: {text[:50]}...")
-                async with session.post(
-                    "https://api.studio.nebius.com/v1/chat/completions",
-                    json=payload,
-                    headers=headers
-                ) as response:
-                    logger.info(f"[{request_id}] Received response with status {response.status}")
+            # Use timeout parameter in session.post instead of asyncio.timeout
+            logger.info(f"[{request_id}] Sending request to API for text: {text[:50]}...")
+            async with session.post(
+                "https://api.studio.nebius.com/v1/chat/completions",
+                json=payload,
+                headers=headers,
+                timeout=timeout  # Use timeout parameter here
+            ) as response:
+                logger.info(f"[{request_id}] Received response with status {response.status}")
 
-                    if response.status != 200:
-                        error_text = await response.text()
-                        raise Exception(f"API error: {response.status} - {error_text}")
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise Exception(f"API error: {response.status} - {error_text}")
 
-                    logger.debug(f"[{request_id}] Parsing JSON response...")
-                    result = await response.json()
-                    response_text = result["choices"][0]["message"]["content"]
+                logger.debug(f"[{request_id}] Parsing JSON response...")
+                result = await response.json()
+                response_text = result["choices"][0]["message"]["content"]
 
-                    # Extract sentiment values
-                    logger.debug(f"[{request_id}] Extracting sentiment values...")
-                    sentiment = extract_sentiment_from_text(response_text)
-                    sentiment["inference_time"] = time.time() - start_time
-                    sentiment["model"] = model_name
+                # Extract sentiment values
+                logger.debug(f"[{request_id}] Extracting sentiment values...")
+                sentiment = extract_sentiment_from_text(response_text)
+                sentiment["inference_time"] = time.time() - start_time
+                sentiment["model"] = model_name
 
-                    # Cache the result
-                    sentiment_cache[cache_key] = sentiment
+                # Cache the result
+                sentiment_cache[cache_key] = sentiment
 
-                    logger.debug(f"[{request_id}] Successfully processed request in {sentiment['inference_time']:.2f}s")
-                    return sentiment
+                logger.debug(f"[{request_id}] Successfully processed request in {sentiment['inference_time']:.2f}s")
+                return sentiment
         except asyncio.TimeoutError:
             logger.warning(f"[{request_id}] Request timed out after {timeout} seconds")
             raise Exception(f"Request timed out after {timeout} seconds")
+        except aiohttp.ClientError as e:
+            logger.warning(f"[{request_id}] Client error: {str(e)}")
+            raise Exception(f"Client error: {str(e)}")
 
     except Exception as e:
         elapsed = time.time() - start_time

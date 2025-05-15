@@ -22,11 +22,11 @@ try:
 except Exception as e:
     print(f"Error loading .env.yaml: {str(e)}")
 
-# Check if running in Cloud Functions environment
-IS_CLOUD_FUNCTION = os.environ.get('K_SERVICE') is not None
+# Check if running in Cloud environment (Cloud Run or Cloud Functions)
+IS_CLOUD_ENV = os.environ.get('K_SERVICE') is not None
 
-# Base directories - use /tmp for Cloud Functions
-BASE_DIR = Path("/tmp") if IS_CLOUD_FUNCTION else Path(".")
+# Get base directory from environment variable or use default
+BASE_DIR = Path(os.environ.get('BASE_DIR', "/tmp" if IS_CLOUD_ENV else "."))
 OUTPUT_DIR = BASE_DIR / "output"
 RAW_DIR = OUTPUT_DIR / "Raw"
 DOWNLOADS_DIR = BASE_DIR / "downloads"
@@ -34,8 +34,16 @@ TEMP_DIR = DOWNLOADS_DIR / "temp"
 DATA_DIR = BASE_DIR / "data"
 LOGS_DIR = BASE_DIR / "logs"
 
-# Log the base directory being used
-print(f"Using base directory: {BASE_DIR} (Cloud Function: {IS_CLOUD_FUNCTION})")
+# Whether to use GCS for file storage
+USE_GCS = os.environ.get('USE_GCS', 'false').lower() == 'true'
+
+# GCS project ID
+GCS_PROJECT = os.environ.get('GCS_PROJECT', 'klipstream')
+
+# Log the configuration being used
+print(f"Using base directory: {BASE_DIR} (Cloud Environment: {IS_CLOUD_ENV})")
+print(f"Using GCS for file storage: {USE_GCS}")
+print(f"GCS Project: {GCS_PROJECT}")
 
 # Raw file directories
 RAW_VIDEOS_DIR = RAW_DIR / "Videos"

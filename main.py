@@ -201,14 +201,38 @@ def run_pipeline(request):
         # Run the integrated pipeline
         result = asyncio.run(run_integrated_pipeline(url))
 
+        # Convert Path objects to strings for JSON serialization
+        serializable_result = convert_paths_to_strings(result)
+
         return {
-            "status": result.get("status", "failed"),
-            "result": result
+            "status": serializable_result.get("status", "failed"),
+            "result": serializable_result
         }
 
     except Exception as e:
         logger.error(f"Error processing request: {str(e)}")
         return {"error": str(e)}, 500
+
+def convert_paths_to_strings(obj):
+    """
+    Recursively convert Path objects to strings for JSON serialization
+
+    Args:
+        obj: The object to convert
+
+    Returns:
+        The converted object with Path objects replaced by strings
+    """
+    if isinstance(obj, Path):
+        return str(obj)
+    elif isinstance(obj, dict):
+        return {k: convert_paths_to_strings(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_paths_to_strings(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(convert_paths_to_strings(item) for item in obj)
+    else:
+        return obj
 
 @functions_framework.http
 def list_files(request):
@@ -243,7 +267,9 @@ def list_files(request):
     for file in files:
         print(file)
 
-    return {"files": files}
+    # Convert any Path objects to strings
+    serializable_files = convert_paths_to_strings(files)
+    return {"files": serializable_files}
 
 @functions_framework.http
 def list_output_files(request):
@@ -255,25 +281,32 @@ def list_output_files(request):
     request_args = request.args if request.args else {}
     max_depth = int(request_args.get('max_depth', '3'))
 
-    output_dirs = ['output', 'data', 'downloads']
+    # Check if running in Cloud Functions environment
+    is_cloud_function = os.environ.get('K_SERVICE') is not None
+    base_dir = Path("/tmp") if is_cloud_function else Path(".")
+
+    output_dirs = [base_dir / 'output', base_dir / 'data', base_dir / 'downloads']
     files = []
 
     for output_dir in output_dirs:
-        if not os.path.exists(output_dir):
+        if not output_dir.exists():
             continue
 
         for root, dirs, filenames in os.walk(output_dir):
             # Calculate depth
-            depth = root.count(os.sep) - output_dir.count(os.sep)
+            root_path = Path(root)
+            depth = len(root_path.relative_to(output_dir).parts)
             if depth > max_depth:
                 continue
 
             for dir_name in dirs:
-                files.append(os.path.join(root, dir_name))
+                files.append(Path(root) / dir_name)
             for filename in filenames:
-                files.append(os.path.join(root, filename))
+                files.append(Path(root) / filename)
 
-    return {"output_files": files}
+    # Convert Path objects to strings for JSON serialization
+    serializable_files = convert_paths_to_strings(files)
+    return {"output_files": serializable_files}
 
 if __name__ == "__main__":
     # Filter resource tracker warnings
