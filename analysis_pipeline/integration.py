@@ -1904,8 +1904,28 @@ def run_integration(video_id):
             audio_sentiment_path = file_manager.get_local_path("audio_sentiment")
             logger.info(f"Downloaded audio sentiment file from GCS: {audio_sentiment_path}")
         else:
-            logger.error(f"Could not find or download audio sentiment file")
-            return False
+            # Try to find the file using the enhanced get_file_path method
+            audio_sentiment_path = file_manager.get_file_path("audio_sentiment")
+            if audio_sentiment_path and os.path.exists(audio_sentiment_path):
+                logger.info(f"Found audio sentiment file at alternative path: {audio_sentiment_path}")
+            else:
+                # Try alternative paths
+                alt_paths = [
+                    Path(f"/tmp/output/Analysis/Audio/audio_{video_id}_sentiment.csv"),
+                    Path(f"/tmp/output/Analysis/audio/audio_{video_id}_sentiment.csv"),
+                    Path(f"output/Analysis/Audio/audio_{video_id}_sentiment.csv"),
+                    Path(f"output/Analysis/audio/audio_{video_id}_sentiment.csv")
+                ]
+
+                for alt_path in alt_paths:
+                    if alt_path.exists():
+                        audio_sentiment_path = alt_path
+                        logger.info(f"Found audio sentiment file at alternative path: {audio_sentiment_path}")
+                        break
+
+                if not os.path.exists(audio_sentiment_path):
+                    logger.error(f"Could not find or download audio sentiment file")
+                    return False
 
     if not os.path.exists(chat_analysis_path):
         logger.warning(f"Chat analysis file not found locally: {chat_analysis_path}")
@@ -1914,8 +1934,33 @@ def run_integration(video_id):
             chat_analysis_path = file_manager.get_local_path("chat_sentiment")
             logger.info(f"Downloaded chat analysis file from GCS: {chat_analysis_path}")
         else:
-            logger.error(f"Could not find or download chat analysis file")
-            return False
+            # Try to find the file using the enhanced get_file_path method
+            chat_analysis_path = file_manager.get_file_path("chat_sentiment")
+            if chat_analysis_path and os.path.exists(chat_analysis_path):
+                logger.info(f"Found chat analysis file at alternative path: {chat_analysis_path}")
+            else:
+                # Try alternative paths
+                alt_paths = [
+                    Path(f"/tmp/output/Analysis/Chat/{video_id}_chat_sentiment.csv"),
+                    Path(f"/tmp/output/Analysis/chat/{video_id}_chat_sentiment.csv"),
+                    Path(f"output/Analysis/Chat/{video_id}_chat_sentiment.csv"),
+                    Path(f"output/Analysis/chat/{video_id}_chat_sentiment.csv")
+                ]
+
+                for alt_path in alt_paths:
+                    if alt_path.exists():
+                        chat_analysis_path = alt_path
+                        logger.info(f"Found chat analysis file at alternative path: {chat_analysis_path}")
+                        break
+
+                if not os.path.exists(chat_analysis_path):
+                    logger.warning(f"Could not find or download chat analysis file")
+                    # Continue with empty chat data instead of failing
+                    logger.warning("Will continue with audio-only analysis")
+                    chat_df = pd.DataFrame(columns=['start_time', 'end_time', 'message_count',
+                                                  'avg_sentiment', 'avg_highlight',
+                                                  'avg_excitement', 'avg_funny', 'avg_happiness',
+                                                  'avg_anger', 'avg_sadness', 'avg_neutral'])
 
     # Load audio sentiment data
     logger.info(f"Loading audio sentiment data from {audio_sentiment_path}")
@@ -1962,57 +2007,69 @@ def run_integration(video_id):
                 logger.error(f"Error reading file: {str(read_error)}")
         return False
 
-    # Load chat analysis data
-    logger.info(f"Loading chat analysis data from {chat_analysis_path}")
-    try:
-        chat_df = pd.read_csv(chat_analysis_path)
-        logger.info(f"Loaded {len(chat_df)} segments from chat analysis file")
+    # Load chat analysis data if we haven't already created an empty DataFrame
+    if 'chat_df' not in locals():
+        logger.info(f"Loading chat analysis data from {chat_analysis_path}")
+        try:
+            if os.path.exists(chat_analysis_path):
+                chat_df = pd.read_csv(chat_analysis_path)
+                logger.info(f"Loaded {len(chat_df)} segments from chat analysis file")
 
-        # Validate chat data
-        if chat_df.empty:
-            logger.warning("Chat analysis file is empty. Will continue with audio-only analysis.")
-            # Create an empty DataFrame with required columns
+                # Validate chat data
+                if chat_df.empty:
+                    logger.warning("Chat analysis file is empty. Will continue with audio-only analysis.")
+                    # Create an empty DataFrame with required columns
+                    chat_df = pd.DataFrame(columns=['start_time', 'end_time', 'message_count',
+                                                   'avg_sentiment', 'avg_highlight',
+                                                   'avg_excitement', 'avg_funny', 'avg_happiness',
+                                                   'avg_anger', 'avg_sadness', 'avg_neutral'])
+                else:
+                    # Check for required columns
+                    required_columns = ['start_time', 'end_time']
+                    missing_columns = [col for col in required_columns if col not in chat_df.columns]
+
+                    if missing_columns:
+                        logger.warning(f"Chat analysis file missing required columns: {missing_columns}")
+                        logger.info(f"Available columns: {list(chat_df.columns)}")
+
+                        # Cannot continue without start_time and end_time
+                        if 'start_time' in missing_columns or 'end_time' in missing_columns:
+                            logger.warning("Cannot continue without start_time and end_time columns in chat data")
+                            # Create an empty DataFrame with required columns instead of failing
+                            chat_df = pd.DataFrame(columns=['start_time', 'end_time', 'message_count',
+                                                          'avg_sentiment', 'avg_highlight',
+                                                          'avg_excitement', 'avg_funny', 'avg_happiness',
+                                                          'avg_anger', 'avg_sadness', 'avg_neutral'])
+                            logger.warning("Created empty chat DataFrame with required columns")
+            else:
+                logger.warning(f"Chat analysis file does not exist: {chat_analysis_path}")
+                # Create an empty DataFrame with required columns
+                chat_df = pd.DataFrame(columns=['start_time', 'end_time', 'message_count',
+                                               'avg_sentiment', 'avg_highlight',
+                                               'avg_excitement', 'avg_funny', 'avg_happiness',
+                                               'avg_anger', 'avg_sadness', 'avg_neutral'])
+                logger.warning("Created empty chat DataFrame with required columns")
+        except Exception as e:
+            logger.error(f"Error loading chat analysis data: {str(e)}")
+            logger.error(f"File exists: {os.path.exists(chat_analysis_path)}")
+            if os.path.exists(chat_analysis_path):
+                logger.error(f"File size: {os.path.getsize(chat_analysis_path)}")
+                # Try to read the first few lines to see if it's valid CSV
+                try:
+                    with open(chat_analysis_path, 'r') as f:
+                        first_lines = [next(f) for _ in range(5)]
+                    logger.error(f"First few lines of file:\n{''.join(first_lines)}")
+                except Exception as read_error:
+                    logger.error(f"Error reading file: {str(read_error)}")
+
+            # Create an empty DataFrame with required columns instead of failing
+            logger.warning("Creating empty chat DataFrame to continue with audio-only analysis")
             chat_df = pd.DataFrame(columns=['start_time', 'end_time', 'message_count',
                                            'avg_sentiment', 'avg_highlight',
                                            'avg_excitement', 'avg_funny', 'avg_happiness',
                                            'avg_anger', 'avg_sadness', 'avg_neutral'])
-        else:
-            # Check for required columns
-            required_columns = ['start_time', 'end_time']
-            missing_columns = [col for col in required_columns if col not in chat_df.columns]
-
-            if missing_columns:
-                logger.error(f"Chat analysis file missing required columns: {missing_columns}")
-                logger.info(f"Available columns: {list(chat_df.columns)}")
-
-                # Cannot continue without start_time and end_time
-                if 'start_time' in missing_columns or 'end_time' in missing_columns:
-                    logger.error("Cannot continue without start_time and end_time columns in chat data")
-                    # Create an empty DataFrame with required columns instead of failing
-                    chat_df = pd.DataFrame(columns=['start_time', 'end_time', 'message_count',
-                                                  'avg_sentiment', 'avg_highlight',
-                                                  'avg_excitement', 'avg_funny', 'avg_happiness',
-                                                  'avg_anger', 'avg_sadness', 'avg_neutral'])
-                    logger.warning("Created empty chat DataFrame with required columns")
-    except Exception as e:
-        logger.error(f"Error loading chat analysis data: {str(e)}")
-        logger.error(f"File exists: {os.path.exists(chat_analysis_path)}")
-        if os.path.exists(chat_analysis_path):
-            logger.error(f"File size: {os.path.getsize(chat_analysis_path)}")
-            # Try to read the first few lines to see if it's valid CSV
-            try:
-                with open(chat_analysis_path, 'r') as f:
-                    first_lines = [next(f) for _ in range(5)]
-                logger.error(f"First few lines of file:\n{''.join(first_lines)}")
-            except Exception as read_error:
-                logger.error(f"Error reading file: {str(read_error)}")
-
-        # Create an empty DataFrame with required columns instead of failing
-        logger.warning("Creating empty chat DataFrame to continue with audio-only analysis")
-        chat_df = pd.DataFrame(columns=['start_time', 'end_time', 'message_count',
-                                       'avg_sentiment', 'avg_highlight',
-                                       'avg_excitement', 'avg_funny', 'avg_happiness',
-                                       'avg_anger', 'avg_sadness', 'avg_neutral'])
+    else:
+        logger.info("Using previously created empty chat DataFrame")
 
     # Integrate chat and audio analysis
     integrated_df = integrate_chat_and_audio_analysis(audio_df, chat_df)
