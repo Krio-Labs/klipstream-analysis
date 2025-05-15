@@ -1882,9 +1882,22 @@ def run_integration(video_id):
     audio_sentiment_path = file_manager.get_local_path("audio_sentiment")
     chat_analysis_path = file_manager.get_local_path("chat_sentiment")
 
+    # Check if paths are None and provide fallbacks
+    if audio_sentiment_path is None:
+        audio_sentiment_path = Path(f"/tmp/output/Analysis/Audio/audio_{video_id}_sentiment.csv")
+        logger.warning(f"Using fallback path for audio sentiment: {audio_sentiment_path}")
+
+    if chat_analysis_path is None:
+        chat_analysis_path = Path(f"/tmp/output/Analysis/Chat/{video_id}_chat_sentiment.csv")
+        logger.warning(f"Using fallback path for chat sentiment: {chat_analysis_path}")
+
     # Define output directory and path
-    output_dir = os.path.join(os.path.dirname(audio_sentiment_path), "..", "Integrated")
+    output_dir = os.path.join(os.path.dirname(str(audio_sentiment_path)), "..", "Integrated")
+
     integrated_output_path = file_manager.get_local_path("integrated_analysis")
+    if integrated_output_path is None:
+        integrated_output_path = Path(f"/tmp/output/Analysis/integrated_{video_id}.json")
+        logger.warning(f"Using fallback path for integrated analysis: {integrated_output_path}")
 
     # Log the paths we're using
     logger.info(f"Using audio sentiment path: {audio_sentiment_path}")
@@ -1893,8 +1906,25 @@ def run_integration(video_id):
     logger.info(f"Will save integrated analysis to: {integrated_output_path}")
 
     # Ensure output directory exists
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(os.path.dirname(integrated_output_path), exist_ok=True)
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Created output directory: {output_dir}")
+    except Exception as e:
+        logger.warning(f"Error creating output directory {output_dir}: {str(e)}")
+        # Fallback to a simpler path
+        output_dir = os.path.join("/tmp/output/Analysis/Integrated")
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Using fallback output directory: {output_dir}")
+
+    try:
+        os.makedirs(os.path.dirname(str(integrated_output_path)), exist_ok=True)
+        logger.info(f"Created directory for integrated output: {os.path.dirname(str(integrated_output_path))}")
+    except Exception as e:
+        logger.warning(f"Error creating directory for integrated output: {str(e)}")
+        # Fallback to a simpler path
+        integrated_output_path = Path(f"{output_dir}/integrated_{video_id}.json")
+        os.makedirs(os.path.dirname(str(integrated_output_path)), exist_ok=True)
+        logger.info(f"Using fallback integrated output path: {integrated_output_path}")
 
     # Check if input files exist and try to download from GCS if missing
     if not os.path.exists(audio_sentiment_path):
