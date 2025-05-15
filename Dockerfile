@@ -33,12 +33,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Install ffmpeg and create a more realistic mock for TwitchDownloaderCLI
-RUN mkdir -p /app/raw_pipeline/bin && \
+RUN mkdir -p /app/raw_pipeline/bin /app/bin && \
     apt-get update && apt-get install -y ffmpeg && \
     cp $(which ffmpeg) /app/raw_pipeline/bin/ffmpeg && \
     chmod +x /app/raw_pipeline/bin/ffmpeg && \
-    echo '#!/bin/bash\necho "TwitchDownloaderCLI mock: $@"\nmkdir -p $(dirname $4)\ntouch $4\nexit 0' > /app/raw_pipeline/bin/TwitchDownloaderCLI && \
-    chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI
+    echo '#!/bin/bash\necho "TwitchDownloaderCLI mock: $@"\nif [[ "$1" == "videodownload" ]]; then\n  mkdir -p $(dirname $4)\n  touch $4\nfi\nexit 0' > /app/raw_pipeline/bin/TwitchDownloaderCLI && \
+    chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI && \
+    cp /app/raw_pipeline/bin/TwitchDownloaderCLI /app/bin/TwitchDownloaderCLI && \
+    chmod +x /app/bin/TwitchDownloaderCLI
 
 # Make sure the binary files are executable
 RUN chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI || true && \
