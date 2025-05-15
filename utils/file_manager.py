@@ -50,6 +50,14 @@ class FileManager:
         self.base_dir = base_dir or BASE_DIR
         self.use_gcs = USE_GCS
 
+        # Check if we're running in Cloud Run (which uses /tmp as writable directory)
+        self.in_cloud_run = os.environ.get('K_SERVICE') is not None
+
+        # If we're in Cloud Run and base_dir doesn't already include /tmp, prepend it
+        if self.in_cloud_run and str(self.base_dir) == '.':
+            self.base_dir = Path('/tmp')
+            logger.info(f"Running in Cloud Run, using base directory: {self.base_dir}")
+
         # Define bucket mapping
         self.bucket_mapping = {
             "video": VODS_BUCKET,
@@ -92,7 +100,16 @@ class FileManager:
             "integrated_analysis": self.base_dir / f"output/Analysis/integrated_{self.video_id}.json"
         }
 
-        return path_mapping.get(file_type)
+        path = path_mapping.get(file_type)
+
+        # If we're in Cloud Run but the path doesn't start with /tmp, check if it exists at /tmp
+        if path and self.in_cloud_run and not str(path).startswith('/tmp'):
+            tmp_path = Path(f"/tmp/{path}")
+            if tmp_path.exists():
+                logger.info(f"Found file at {tmp_path} instead of {path}")
+                return tmp_path
+
+        return path
 
     def get_gcs_path(self, file_type: str) -> str:
         """
@@ -189,6 +206,7 @@ class FileManager:
     def get_file_path(self, file_type: str, download_if_missing: bool = True) -> Optional[Path]:
         """
         Get the path to a file, downloading from GCS if necessary.
+        This method checks multiple possible locations for the file.
 
         Args:
             file_type (str): Type of file (video, audio, transcript, etc.)
@@ -197,20 +215,73 @@ class FileManager:
         Returns:
             Path: Path to the file, or None if not found
         """
+        # Get the standard local path
         local_path = self.get_local_path(file_type)
 
-        # If file exists locally, return it
+        # Check if file exists at the standard path
         if local_path and local_path.exists():
+            logger.info(f"Found {file_type} at standard path: {local_path}")
             return local_path
+
+        # If we're in Cloud Run, check both with and without /tmp prefix
+        if self.in_cloud_run:
+            # Check with /tmp prefix if not already there
+            if local_path and not str(local_path).startswith('/tmp'):
+                tmp_path = Path(f"/tmp/{local_path}")
+                if tmp_path.exists():
+                    logger.info(f"Found {file_type} at Cloud Run path: {tmp_path}")
+                    return tmp_path
+
+            # Check without /tmp prefix if it's already there
+            if local_path and str(local_path).startswith('/tmp'):
+                non_tmp_path = Path(str(local_path).replace('/tmp/', '', 1))
+                if non_tmp_path.exists():
+                    logger.info(f"Found {file_type} at non-tmp path: {non_tmp_path}")
+                    return non_tmp_path
+
+        # Try alternative paths based on file type
+        alt_paths = []
+
+        if file_type == "audio_sentiment":
+            # Try different casing and locations
+            alt_paths = [
+                Path(f"/tmp/output/Analysis/audio/audio_{self.video_id}_sentiment.csv"),
+                Path(f"/tmp/output/Analysis/Audio/audio_{self.video_id}_sentiment.csv"),
+                Path(f"output/Analysis/audio/audio_{self.video_id}_sentiment.csv"),
+                Path(f"output/Analysis/Audio/audio_{self.video_id}_sentiment.csv")
+            ]
+        elif file_type == "chat_sentiment":
+            # Try different naming patterns
+            alt_paths = [
+                Path(f"/tmp/output/Analysis/Chat/{self.video_id}_chat_sentiment.csv"),
+                Path(f"/tmp/output/Analysis/chat/{self.video_id}_chat_sentiment.csv"),
+                Path(f"output/Analysis/Chat/{self.video_id}_chat_sentiment.csv"),
+                Path(f"output/Analysis/chat/{self.video_id}_chat_sentiment.csv")
+            ]
+
+        # Check alternative paths
+        for alt_path in alt_paths:
+            if alt_path.exists():
+                logger.info(f"Found {file_type} at alternative path: {alt_path}")
+                return alt_path
 
         # If download_if_missing is False, don't try to download from GCS
         if not download_if_missing or not self.use_gcs:
+            logger.warning(f"Could not find {file_type} locally and download_if_missing is {download_if_missing}")
             return None
 
         # Try to download from GCS
+        logger.info(f"Attempting to download {file_type} from GCS")
         if self.download_from_gcs(file_type):
-            return local_path
+            # Get the path again after download
+            downloaded_path = self.get_local_path(file_type)
+            if downloaded_path and downloaded_path.exists():
+                logger.info(f"Successfully downloaded {file_type} to {downloaded_path}")
+                return downloaded_path
+            else:
+                logger.warning(f"Downloaded {file_type} but file not found at expected path")
 
+        logger.warning(f"Could not find or download {file_type}")
         return None
 
     def download_from_gcs(self, file_type: str, max_retries: int = 3, retry_delay: int = 5,
