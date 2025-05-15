@@ -65,4 +65,4 @@ RUN if [ ! -s /app/analysis_pipeline/chat/models/emotion_classifier_pipe_lr.pkl 
     fi
 
 # Use functions-framework to start the function
-CMD ["functions-framework", "--target=run_pipeline", "--port=${PORT}"]
+CMD ["functions-framework", "--target=run_pipeline", "--port=8080"]
