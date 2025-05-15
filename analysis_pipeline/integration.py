@@ -16,7 +16,8 @@ from google.api_core.exceptions import GoogleAPIError
 from google.oauth2 import service_account
 from pathlib import Path
 
-from utils.config import ANALYSIS_BUCKET, GCP_SERVICE_ACCOUNT_PATH
+from utils.config import ANALYSIS_BUCKET, GCP_SERVICE_ACCOUNT_PATH, USE_GCS
+from utils.file_manager import FileManager
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -1874,31 +1875,91 @@ def run_integration(video_id):
     """
     logger.info(f"Starting integration for video ID: {video_id}")
 
-    # Define input and output paths
-    audio_sentiment_path = f"output/Analysis/Audio/audio_{video_id}_sentiment.csv"
-    chat_analysis_path = f"output/Analysis/Chat/{video_id}_highlight_analysis.csv"
-    output_dir = "output/Analysis/Integrated"
-    integrated_output_path = f"{output_dir}/{video_id}_integrated_analysis.csv"
+    # Initialize file manager
+    file_manager = FileManager(video_id)
+
+    # Get file paths using file manager
+    audio_sentiment_path = file_manager.get_local_path("audio_sentiment")
+    chat_analysis_path = file_manager.get_local_path("chat_sentiment")
+
+    # Define output directory and path
+    output_dir = os.path.join(os.path.dirname(audio_sentiment_path), "..", "Integrated")
+    integrated_output_path = file_manager.get_local_path("integrated_analysis")
+
+    # Log the paths we're using
+    logger.info(f"Using audio sentiment path: {audio_sentiment_path}")
+    logger.info(f"Using chat analysis path: {chat_analysis_path}")
+    logger.info(f"Using output directory: {output_dir}")
+    logger.info(f"Will save integrated analysis to: {integrated_output_path}")
 
     # Ensure output directory exists
     os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(os.path.dirname(integrated_output_path), exist_ok=True)
 
-    # Check if input files exist
+    # Check if input files exist and try to download from GCS if missing
     if not os.path.exists(audio_sentiment_path):
-        logger.error(f"Audio sentiment file not found: {audio_sentiment_path}")
-        return False
+        logger.warning(f"Audio sentiment file not found locally: {audio_sentiment_path}")
+        # Try to download from GCS if enabled
+        if USE_GCS and file_manager.download_from_gcs("audio_sentiment"):
+            audio_sentiment_path = file_manager.get_local_path("audio_sentiment")
+            logger.info(f"Downloaded audio sentiment file from GCS: {audio_sentiment_path}")
+        else:
+            logger.error(f"Could not find or download audio sentiment file")
+            return False
 
     if not os.path.exists(chat_analysis_path):
-        logger.error(f"Chat analysis file not found: {chat_analysis_path}")
-        return False
+        logger.warning(f"Chat analysis file not found locally: {chat_analysis_path}")
+        # Try to download from GCS if enabled
+        if USE_GCS and file_manager.download_from_gcs("chat_sentiment"):
+            chat_analysis_path = file_manager.get_local_path("chat_sentiment")
+            logger.info(f"Downloaded chat analysis file from GCS: {chat_analysis_path}")
+        else:
+            logger.error(f"Could not find or download chat analysis file")
+            return False
 
     # Load audio sentiment data
     logger.info(f"Loading audio sentiment data from {audio_sentiment_path}")
     try:
         audio_df = pd.read_csv(audio_sentiment_path)
         logger.info(f"Loaded {len(audio_df)} segments from audio sentiment file")
+
+        # Validate audio data
+        if audio_df.empty:
+            logger.error("Audio sentiment file is empty")
+            return False
+
+        # Check for required columns
+        required_columns = ['start_time', 'end_time', 'text', 'sentiment_score',
+                           'excitement', 'funny', 'happiness', 'anger', 'sadness', 'neutral']
+        missing_columns = [col for col in required_columns if col not in audio_df.columns]
+
+        if missing_columns:
+            logger.error(f"Audio sentiment file missing required columns: {missing_columns}")
+            logger.info(f"Available columns: {list(audio_df.columns)}")
+
+            # Try to continue with missing columns by adding them with default values
+            for col in missing_columns:
+                if col in ['start_time', 'end_time']:
+                    logger.error(f"Cannot continue without critical column: {col}")
+                    return False
+                elif col == 'text':
+                    audio_df[col] = ""
+                    logger.warning(f"Added empty '{col}' column to audio data")
+                else:
+                    audio_df[col] = 0.0
+                    logger.warning(f"Added '{col}' column with default value 0.0 to audio data")
     except Exception as e:
         logger.error(f"Error loading audio sentiment data: {str(e)}")
+        logger.error(f"File exists: {os.path.exists(audio_sentiment_path)}")
+        if os.path.exists(audio_sentiment_path):
+            logger.error(f"File size: {os.path.getsize(audio_sentiment_path)}")
+            # Try to read the first few lines to see if it's valid CSV
+            try:
+                with open(audio_sentiment_path, 'r') as f:
+                    first_lines = [next(f) for _ in range(5)]
+                logger.error(f"First few lines of file:\n{''.join(first_lines)}")
+            except Exception as read_error:
+                logger.error(f"Error reading file: {str(read_error)}")
         return False
 
     # Load chat analysis data
@@ -1906,9 +1967,52 @@ def run_integration(video_id):
     try:
         chat_df = pd.read_csv(chat_analysis_path)
         logger.info(f"Loaded {len(chat_df)} segments from chat analysis file")
+
+        # Validate chat data
+        if chat_df.empty:
+            logger.warning("Chat analysis file is empty. Will continue with audio-only analysis.")
+            # Create an empty DataFrame with required columns
+            chat_df = pd.DataFrame(columns=['start_time', 'end_time', 'message_count',
+                                           'avg_sentiment', 'avg_highlight',
+                                           'avg_excitement', 'avg_funny', 'avg_happiness',
+                                           'avg_anger', 'avg_sadness', 'avg_neutral'])
+        else:
+            # Check for required columns
+            required_columns = ['start_time', 'end_time']
+            missing_columns = [col for col in required_columns if col not in chat_df.columns]
+
+            if missing_columns:
+                logger.error(f"Chat analysis file missing required columns: {missing_columns}")
+                logger.info(f"Available columns: {list(chat_df.columns)}")
+
+                # Cannot continue without start_time and end_time
+                if 'start_time' in missing_columns or 'end_time' in missing_columns:
+                    logger.error("Cannot continue without start_time and end_time columns in chat data")
+                    # Create an empty DataFrame with required columns instead of failing
+                    chat_df = pd.DataFrame(columns=['start_time', 'end_time', 'message_count',
+                                                  'avg_sentiment', 'avg_highlight',
+                                                  'avg_excitement', 'avg_funny', 'avg_happiness',
+                                                  'avg_anger', 'avg_sadness', 'avg_neutral'])
+                    logger.warning("Created empty chat DataFrame with required columns")
     except Exception as e:
         logger.error(f"Error loading chat analysis data: {str(e)}")
-        return False
+        logger.error(f"File exists: {os.path.exists(chat_analysis_path)}")
+        if os.path.exists(chat_analysis_path):
+            logger.error(f"File size: {os.path.getsize(chat_analysis_path)}")
+            # Try to read the first few lines to see if it's valid CSV
+            try:
+                with open(chat_analysis_path, 'r') as f:
+                    first_lines = [next(f) for _ in range(5)]
+                logger.error(f"First few lines of file:\n{''.join(first_lines)}")
+            except Exception as read_error:
+                logger.error(f"Error reading file: {str(read_error)}")
+
+        # Create an empty DataFrame with required columns instead of failing
+        logger.warning("Creating empty chat DataFrame to continue with audio-only analysis")
+        chat_df = pd.DataFrame(columns=['start_time', 'end_time', 'message_count',
+                                       'avg_sentiment', 'avg_highlight',
+                                       'avg_excitement', 'avg_funny', 'avg_happiness',
+                                       'avg_anger', 'avg_sadness', 'avg_neutral'])
 
     # Integrate chat and audio analysis
     integrated_df = integrate_chat_and_audio_analysis(audio_df, chat_df)
@@ -2016,11 +2120,19 @@ def run_integration(video_id):
 
     # Upload integrated analysis file to GCS
     try:
-        upload_result = upload_integrated_analysis_to_gcs(video_id, integrated_output_path)
-        if upload_result:
-            logger.info(f"Successfully uploaded integrated analysis to GCS bucket: {ANALYSIS_BUCKET}")
+        if USE_GCS:
+            if file_manager.upload_to_gcs("integrated_analysis"):
+                logger.info(f"Successfully uploaded integrated analysis to GCS bucket: {ANALYSIS_BUCKET}")
+            else:
+                logger.warning("Failed to upload integrated analysis to GCS using file manager. Trying fallback method.")
+                # Fallback to old method
+                upload_result = upload_integrated_analysis_to_gcs(video_id, integrated_output_path)
+                if upload_result:
+                    logger.info(f"Successfully uploaded integrated analysis to GCS bucket using fallback method")
+                else:
+                    logger.warning("Failed to upload integrated analysis to GCS. See logs for details.")
         else:
-            logger.warning("Failed to upload integrated analysis to GCS. See logs for details.")
+            logger.info("GCS uploads disabled. Skipping upload of integrated analysis.")
     except Exception as e:
         logger.error(f"Error uploading integrated analysis to GCS: {str(e)}")
         logger.warning("To fix GCS authentication issues, run: gcloud auth application-default login")
@@ -2032,6 +2144,7 @@ def run_integration(video_id):
 def upload_integrated_analysis_to_gcs(video_id, file_path):
     """
     Upload integrated analysis file to Google Cloud Storage
+    This is a fallback method when the file manager upload fails.
 
     Args:
         video_id (str): The video ID
@@ -2041,12 +2154,18 @@ def upload_integrated_analysis_to_gcs(video_id, file_path):
         dict: Information about the uploaded file or None if upload failed
     """
     try:
-        logger.info(f"Uploading integrated analysis file to GCS bucket: {ANALYSIS_BUCKET}")
+        logger.info(f"Using fallback method to upload integrated analysis file to GCS bucket: {ANALYSIS_BUCKET}")
 
         # Check if file exists
         if not os.path.exists(file_path):
             logger.error(f"File not found: {file_path}")
             return None
+
+        # Initialize file manager to get the correct GCS path
+        file_manager = FileManager(video_id)
+        gcs_path = file_manager.get_gcs_path("integrated_analysis")
+
+        logger.info(f"Using GCS path from file manager: {gcs_path}")
 
         # Initialize GCS client
         try:
@@ -2100,8 +2219,14 @@ def upload_integrated_analysis_to_gcs(video_id, file_path):
         try:
             bucket = client.bucket(ANALYSIS_BUCKET)
 
-            # Determine destination path in GCS
-            blob_name = f"{video_id}/{Path(file_path).name}"
+            # Use the GCS path from file manager if available, otherwise use fallback
+            if gcs_path:
+                # The gcs_path includes the bucket name, so we need to extract just the blob name
+                blob_name = gcs_path.split(f"{ANALYSIS_BUCKET}/")[1] if f"{ANALYSIS_BUCKET}/" in gcs_path else gcs_path
+            else:
+                # Fallback to old path format
+                blob_name = f"{video_id}/{Path(file_path).name}"
+
             blob = bucket.blob(blob_name)
 
             # Upload file
@@ -2154,27 +2279,43 @@ def create_loudness_visualization(video_id, output_dir):
     """
     logger.info(f"Generating loudness visualization for {video_id}")
 
+    # Initialize file manager
+    file_manager = FileManager(video_id)
+
     # Create figure
     plt.figure(figsize=(15, 6))
 
-    # Extract audio waveform - try multiple possible paths
-    possible_audio_paths = [
-        f"output/Raw/audio/audio_{video_id}.wav",  # lowercase 'audio'
-        f"output/Raw/Audio/audio_{video_id}.wav",  # uppercase 'Audio'
-        f"output/Raw/audio_{video_id}.wav",        # directly in Raw
-        f"output/Raw/audio_{video_id}.mp3"         # mp3 format
-    ]
+    # Get audio file path using file manager
+    audio_file_path = file_manager.get_local_path("audio")
 
-    audio_file_path = None
-    for path in possible_audio_paths:
-        if os.path.exists(path):
-            audio_file_path = path
-            logger.info(f"Found audio file for loudness visualization at: {audio_file_path}")
-            break
+    # Check if audio file exists locally
+    if not os.path.exists(audio_file_path):
+        logger.warning(f"Audio file not found locally: {audio_file_path}")
+        # Try to download from GCS if enabled
+        if USE_GCS and file_manager.download_from_gcs("audio"):
+            audio_file_path = file_manager.get_local_path("audio")
+            logger.info(f"Downloaded audio file from GCS: {audio_file_path}")
+        else:
+            logger.warning(f"Could not find or download audio file. Trying fallback paths.")
 
-    if audio_file_path is None:
-        logger.warning(f"Audio file not found in any of the expected locations for loudness visualization")
-        audio_file_path = possible_audio_paths[0]  # Use the first path as default even if it doesn't exist
+            # Fallback to multiple possible paths for backward compatibility
+            possible_audio_paths = [
+                f"output/Raw/audio/audio_{video_id}.wav",  # lowercase 'audio'
+                f"output/Raw/Audio/audio_{video_id}.wav",  # uppercase 'Audio'
+                f"output/Raw/audio_{video_id}.wav",        # directly in Raw
+                f"output/Raw/audio_{video_id}.mp3"         # mp3 format
+            ]
+
+            for path in possible_audio_paths:
+                if os.path.exists(path):
+                    audio_file_path = path
+                    logger.info(f"Found audio file for loudness visualization at fallback path: {audio_file_path}")
+                    break
+
+            if not os.path.exists(audio_file_path):
+                logger.warning(f"Audio file not found in any location for loudness visualization")
+                # Use the file manager path as default even if it doesn't exist
+                audio_file_path = file_manager.get_local_path("audio")
 
     waveform_times, waveform_amplitudes = extract_audio_waveform(audio_file_path, num_points=2000)
 
