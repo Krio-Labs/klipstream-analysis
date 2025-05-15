@@ -32,12 +32,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Install ffmpeg and create a more realistic mock for TwitchDownloaderCLI
+# Install ffmpeg and create a more sophisticated mock for TwitchDownloaderCLI
 RUN mkdir -p /app/raw_pipeline/bin /app/bin && \
     apt-get update && apt-get install -y ffmpeg && \
     cp $(which ffmpeg) /app/raw_pipeline/bin/ffmpeg && \
     chmod +x /app/raw_pipeline/bin/ffmpeg && \
-    echo '#!/bin/bash\necho "TwitchDownloaderCLI mock: $@"\nif [[ "$1" == "videodownload" ]]; then\n  mkdir -p $(dirname $4)\n  touch $4\nfi\nexit 0' > /app/raw_pipeline/bin/TwitchDownloaderCLI && \
+    echo '#!/bin/bash\necho "TwitchDownloaderCLI mock: $@"\nif [[ "$1" == "videodownload" ]]; then\n  OUTPUT_FILE=""\n  for i in "$@"; do\n    if [[ "$prev" == "-o" ]]; then\n      OUTPUT_FILE="$i"\n      break\n    fi\n    prev="$i"\n  done\n  if [[ -n "$OUTPUT_FILE" ]]; then\n    mkdir -p $(dirname "$OUTPUT_FILE")\n    # Create a small valid MP4 file\n    ffmpeg -f lavfi -i testsrc=duration=10:size=320x240:rate=30 -c:v libx264 "$OUTPUT_FILE" -y\n  fi\nfi\nexit 0' > /app/raw_pipeline/bin/TwitchDownloaderCLI && \
     chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI && \
     cp /app/raw_pipeline/bin/TwitchDownloaderCLI /app/bin/TwitchDownloaderCLI && \
     chmod +x /app/bin/TwitchDownloaderCLI
