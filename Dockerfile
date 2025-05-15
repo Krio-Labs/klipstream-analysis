@@ -32,18 +32,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Download TwitchDownloaderCLI and ffmpeg if they don't exist or are empty
-RUN if [ ! -s /app/raw_pipeline/bin/TwitchDownloaderCLI ]; then \
-        wget -q https://github.com/lay295/TwitchDownloader/releases/download/1.55.0/TwitchDownloaderCLI-Linux-x64.zip -O /tmp/twitch-dl.zip && \
-        unzip /tmp/twitch-dl.zip -d /app/raw_pipeline/bin && \
-        chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI && \
-        rm /tmp/twitch-dl.zip; \
-    fi
+# Always download TwitchDownloaderCLI and ffmpeg to ensure compatibility
+RUN wget -q https://github.com/lay295/TwitchDownloader/releases/download/1.55.0/TwitchDownloaderCLI-Linux-x64.zip -O /tmp/twitch-dl.zip && \
+    unzip /tmp/twitch-dl.zip -d /app/raw_pipeline/bin && \
+    chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI && \
+    rm /tmp/twitch-dl.zip
 
-RUN if [ ! -s /app/raw_pipeline/bin/ffmpeg ]; then \
-        apt-get update && apt-get install -y ffmpeg && \
-        cp $(which ffmpeg) /app/raw_pipeline/bin/ffmpeg; \
-    fi
+RUN apt-get update && apt-get install -y ffmpeg && \
+    cp $(which ffmpeg) /app/raw_pipeline/bin/ffmpeg && \
+    chmod +x /app/raw_pipeline/bin/ffmpeg
 
 # Make sure the binary files are executable
 RUN chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI || true && \
@@ -53,6 +50,8 @@ RUN chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI || true && \
 ENV PATH="/app/raw_pipeline/bin:${PATH}"
 ENV DOTNET_BUNDLE_EXTRACT_BASE_DIR="/tmp/.dotnet/bundle_extract"
 ENV PORT=8080
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONIOENCODING=UTF-8
 
 # Create necessary directories
 RUN mkdir -p /tmp/output /tmp/downloads /tmp/data /tmp/logs
