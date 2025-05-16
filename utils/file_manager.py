@@ -338,16 +338,36 @@ class FileManager:
                     timeout = max(300, int(file_size / (100 * 1024)))  # Scale timeout with file size
 
                     # Download with appropriate settings
-                    blob.download_to_filename(
-                        local_path,
-                        timeout=timeout,
-                        retry=storage.retry.Retry(
-                            initial=1.0,
-                            maximum=60.0,
-                            multiplier=2.0,
-                            deadline=timeout
+                    try:
+                        # First try with the newer API (google-cloud-storage >= 2.0.0)
+                        from google.api_core.retry import Retry
+                        blob.download_to_filename(
+                            local_path,
+                            timeout=timeout,
+                            retry=Retry(
+                                initial=1.0,
+                                maximum=60.0,
+                                multiplier=2.0,
+                                deadline=timeout
+                            )
                         )
-                    )
+                    except (ImportError, AttributeError) as e:
+                        logger.warning(f"Retry import failed: {str(e)}, trying alternative method")
+                        try:
+                            # Try with DEFAULT_RETRY (google-cloud-storage >= 1.31.0)
+                            from google.cloud.storage.retry import DEFAULT_RETRY
+                            blob.download_to_filename(
+                                local_path,
+                                timeout=timeout,
+                                retry=DEFAULT_RETRY
+                            )
+                        except (ImportError, AttributeError) as e:
+                            logger.warning(f"DEFAULT_RETRY import failed: {str(e)}, downloading without retry")
+                            # Fallback to no retry
+                            blob.download_to_filename(
+                                local_path,
+                                timeout=timeout
+                            )
 
                     # Verify file was downloaded correctly
                     if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
@@ -448,17 +468,39 @@ class FileManager:
                     timeout = max(300, int(file_size / (100 * 1024)))  # Scale timeout with file size
 
                     # Upload with appropriate settings
-                    blob.upload_from_filename(
-                        local_path,
-                        timeout=timeout,
-                        if_generation_match=None,  # Avoid generation matching errors
-                        retry=storage.retry.Retry(
-                            initial=1.0,
-                            maximum=60.0,
-                            multiplier=2.0,
-                            deadline=timeout
+                    try:
+                        # First try with the newer API (google-cloud-storage >= 2.0.0)
+                        from google.api_core.retry import Retry
+                        blob.upload_from_filename(
+                            local_path,
+                            timeout=timeout,
+                            if_generation_match=None,  # Avoid generation matching errors
+                            retry=Retry(
+                                initial=1.0,
+                                maximum=60.0,
+                                multiplier=2.0,
+                                deadline=timeout
+                            )
                         )
-                    )
+                    except (ImportError, AttributeError) as e:
+                        logger.warning(f"Retry import failed: {str(e)}, trying alternative method")
+                        try:
+                            # Try with DEFAULT_RETRY (google-cloud-storage >= 1.31.0)
+                            from google.cloud.storage.retry import DEFAULT_RETRY
+                            blob.upload_from_filename(
+                                local_path,
+                                timeout=timeout,
+                                if_generation_match=None,  # Avoid generation matching errors
+                                retry=DEFAULT_RETRY
+                            )
+                        except (ImportError, AttributeError) as e:
+                            logger.warning(f"DEFAULT_RETRY import failed: {str(e)}, uploading without retry")
+                            # Fallback to no retry
+                            blob.upload_from_filename(
+                                local_path,
+                                timeout=timeout,
+                                if_generation_match=None  # Avoid generation matching errors
+                            )
 
                     logger.info(f"Successfully uploaded {local_path} to {bucket_name}/{gcs_path}")
                     return True
