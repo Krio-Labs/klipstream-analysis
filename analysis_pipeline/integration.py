@@ -2101,8 +2101,44 @@ def run_integration(video_id):
     else:
         logger.info("Using previously created empty chat DataFrame")
 
-    # Integrate chat and audio analysis
-    integrated_df = integrate_chat_and_audio_analysis(audio_df, chat_df)
+    try:
+        # Integrate chat and audio analysis
+        integrated_df = integrate_chat_and_audio_analysis(audio_df, chat_df)
+        logger.info(f"Successfully integrated chat and audio analysis with {len(integrated_df)} segments")
+    except Exception as e:
+        logger.error(f"Error in integrate_chat_and_audio_analysis: {str(e)}")
+        # Create a minimal integrated dataframe
+        logger.warning("Creating minimal integrated dataframe")
+
+        # Use audio_df as the base for the integrated dataframe
+        integrated_df = audio_df.copy()
+
+        # Add chat columns with default values
+        chat_columns = {
+            'message_count': 0,
+            'avg_sentiment': 0.0,
+            'avg_highlight': 0.0,
+            'avg_excitement': 0.0,
+            'avg_funny': 0.0,
+            'avg_happiness': 0.0,
+            'avg_anger': 0.0,
+            'avg_sadness': 0.0,
+            'avg_neutral': 1.0
+        }
+
+        for col, default_val in chat_columns.items():
+            if col not in integrated_df.columns:
+                integrated_df[col] = default_val
+
+        # Add enhanced highlight score
+        if 'enhanced_highlight_score' not in integrated_df.columns:
+            if 'highlight_score' in integrated_df.columns:
+                integrated_df['enhanced_highlight_score'] = integrated_df['highlight_score']
+            else:
+                integrated_df['enhanced_highlight_score'] = 0.0
+                integrated_df['highlight_score'] = 0.0
+
+        logger.info(f"Created minimal integrated dataframe with {len(integrated_df)} segments")
 
     # Save integrated analysis
     logger.info(f"Saving integrated analysis to {integrated_output_path}")
