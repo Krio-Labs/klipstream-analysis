@@ -129,13 +129,25 @@ async def process_analysis(video_id):
                 os.remove(processed_chat_file)
                 logger.info(f"Deleted intermediate file: {processed_chat_file}")
 
-            # Delete chat_sentiment.csv
+            # DO NOT delete chat_sentiment.csv as it's needed for integration
             chat_sentiment_file = chat_analysis_dir / f"{video_id}_chat_sentiment.csv"
             if os.path.exists(chat_sentiment_file):
-                os.remove(chat_sentiment_file)
-                logger.info(f"Deleted intermediate file: {chat_sentiment_file}")
+                # Upload to GCS if enabled
+                if USE_GCS:
+                    try:
+                        # Upload chat sentiment file to GCS
+                        if file_manager.upload_to_gcs("chat_sentiment"):
+                            logger.info(f"Successfully uploaded chat sentiment file to GCS")
+                        else:
+                            logger.warning(f"Failed to upload chat sentiment file to GCS")
+                    except Exception as upload_error:
+                        logger.warning(f"Error uploading chat sentiment file to GCS: {str(upload_error)}")
+
+                logger.info(f"Keeping chat sentiment file for integration: {chat_sentiment_file}")
+            else:
+                logger.warning(f"Chat sentiment file not found at expected path: {chat_sentiment_file}")
         except Exception as e:
-            logger.warning(f"Error cleaning up intermediate files: {str(e)}")
+            logger.warning(f"Error handling intermediate files: {str(e)}")
 
         # Now process audio in parallel
         with concurrent.futures.ThreadPoolExecutor() as executor:
