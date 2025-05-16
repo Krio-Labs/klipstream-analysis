@@ -129,7 +129,7 @@ async def process_analysis(video_id):
                 os.remove(processed_chat_file)
                 logger.info(f"Deleted intermediate file: {processed_chat_file}")
 
-            # DO NOT delete chat_sentiment.csv as it's needed for integration
+            # IMPORTANT: DO NOT DELETE chat_sentiment.csv as it's needed for integration
             chat_sentiment_file = chat_analysis_dir / f"{video_id}_chat_sentiment.csv"
             if os.path.exists(chat_sentiment_file):
                 # Upload to GCS if enabled
@@ -143,7 +143,12 @@ async def process_analysis(video_id):
                     except Exception as upload_error:
                         logger.warning(f"Error uploading chat sentiment file to GCS: {str(upload_error)}")
 
-                logger.info(f"Keeping chat sentiment file for integration: {chat_sentiment_file}")
+                logger.info(f"KEEPING chat sentiment file for integration: {chat_sentiment_file}")
+                # Double-check that the file still exists
+                if os.path.exists(chat_sentiment_file):
+                    logger.info(f"Confirmed chat sentiment file still exists at: {chat_sentiment_file}")
+                else:
+                    logger.error(f"Chat sentiment file disappeared from: {chat_sentiment_file}")
             else:
                 logger.warning(f"Chat sentiment file not found at expected path: {chat_sentiment_file}")
         except Exception as e:
