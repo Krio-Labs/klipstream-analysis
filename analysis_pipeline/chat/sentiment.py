@@ -224,7 +224,70 @@ def analyze_chat_sentiment(video_id, output_dir=None):
 
             # Load the final result to return
             final_df = pd.read_csv(output_file)
-            return final_df
+
+            # Add required start_time and end_time columns for integration
+            logger.info("Adding start_time and end_time columns required for integration")
+
+            # Group messages into 30-second windows for integration
+            window_size = 30  # seconds
+
+            # Sort by time to ensure proper windowing
+            final_df = final_df.sort_values('time')
+
+            # Calculate min and max time
+            min_time = final_df['time'].min()
+            max_time = final_df['time'].max()
+
+            # Create windows
+            windows = []
+            for start_time in np.arange(min_time, max_time, window_size):
+                end_time = start_time + window_size
+
+                # Get messages in this window
+                window_messages = final_df[(final_df['time'] >= start_time) & (final_df['time'] < end_time)]
+
+                if len(window_messages) > 0:
+                    # Calculate average scores for this window
+                    window_data = {
+                        'start_time': start_time,
+                        'end_time': end_time,
+                        'message_count': len(window_messages),
+                        'avg_sentiment': window_messages['sentiment_score'].mean(),
+                        'avg_highlight': window_messages['highlight_score'].mean(),
+                        'avg_excitement': window_messages['excitement'].mean(),
+                        'avg_funny': window_messages['funny'].mean(),
+                        'avg_happiness': window_messages['happiness'].mean(),
+                        'avg_anger': window_messages['anger'].mean(),
+                        'avg_sadness': window_messages['sadness'].mean(),
+                        'avg_neutral': window_messages['neutral'].mean()
+                    }
+                    windows.append(window_data)
+
+            # Create DataFrame from windows
+            if windows:
+                windows_df = pd.DataFrame(windows)
+
+                # Round scores
+                score_columns = [col for col in windows_df.columns if col not in ['start_time', 'end_time', 'message_count']]
+                windows_df[score_columns] = windows_df[score_columns].round(3)
+
+                # Save to CSV
+                windows_output_file = output_dir / f"{video_id}_chat_sentiment.csv"
+                windows_df.to_csv(windows_output_file, index=False)
+                logger.info(f"Saved windowed chat sentiment data to {windows_output_file}")
+
+                return windows_df
+            else:
+                logger.warning("No windows were created. Creating empty DataFrame with required columns")
+                # Create an empty DataFrame with required columns
+                empty_df = pd.DataFrame(columns=[
+                    'start_time', 'end_time', 'message_count',
+                    'avg_sentiment', 'avg_highlight',
+                    'avg_excitement', 'avg_funny', 'avg_happiness',
+                    'avg_anger', 'avg_sadness', 'avg_neutral'
+                ])
+                empty_df.to_csv(output_file, index=False)
+                return empty_df
         else:
             logger.error("No results were generated from the analysis")
             return None
