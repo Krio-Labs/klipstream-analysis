@@ -312,7 +312,17 @@ class FileManager:
             if not local_path or not gcs_path or not bucket_name:
                 return False
 
-            client = storage.Client(project=GCS_PROJECT)
+            # Use service account credentials instead of application default credentials
+            import os
+            service_account_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'new-service-account-key.json')
+
+            if os.path.exists(service_account_path):
+                logger.info(f"Using service account credentials from {service_account_path}")
+                client = storage.Client.from_service_account_json(service_account_path, project=GCS_PROJECT)
+            else:
+                logger.warning(f"Service account key file not found at {service_account_path}, falling back to application default credentials")
+                client = storage.Client(project=GCS_PROJECT)
+
             bucket = client.bucket(bucket_name)
 
             # Try to download with retries and exponential backoff
@@ -430,6 +440,8 @@ class FileManager:
             return False
 
         try:
+            # Import required modules
+            import os
             from google.cloud import storage
             from google.cloud.exceptions import GoogleCloudError
 
@@ -449,7 +461,16 @@ class FileManager:
             file_size = os.path.getsize(local_path)
             logger.info(f"Uploading file {local_path} ({file_size/1024/1024:.2f} MB) to {bucket_name}/{gcs_path}")
 
-            client = storage.Client(project=GCS_PROJECT)
+            # Use service account credentials instead of application default credentials
+            service_account_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'new-service-account-key.json')
+
+            if os.path.exists(service_account_path):
+                logger.info(f"Using service account credentials from {service_account_path}")
+                client = storage.Client.from_service_account_json(service_account_path, project=GCS_PROJECT)
+            else:
+                logger.warning(f"Service account key file not found at {service_account_path}, falling back to application default credentials")
+                client = storage.Client(project=GCS_PROJECT)
+
             bucket = client.bucket(bucket_name)
 
             # Large files will use resumable uploads automatically

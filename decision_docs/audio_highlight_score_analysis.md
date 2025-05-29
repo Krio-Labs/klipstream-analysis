@@ -10,7 +10,7 @@ The audio highlight score calculation is a multi-step process that combines seve
 
 1. **Sliding Window Generation**: The system first creates sliding windows of audio/transcript data
 2. **Audio Feature Extraction**: Audio intensity features are extracted from the waveform
-3. **Emotion & Sentiment Analysis**: Text is analyzed for emotions and sentiment
+3. **Emotion & Sentiment Analysis**: Text is analyzed for emotions and sentiment using Nebius API
 4. **Highlight Score Calculation**: Multiple factors are combined with weighted importance
 5. **Integration with Chat**: Audio highlight scores are combined with chat analysis for enhanced scores
 
@@ -28,6 +28,8 @@ This approach creates segments that are more effective for highlight detection t
 - Start and end times
 - Combined text from overlapping paragraphs
 - Word count and speech rate calculations
+
+The sliding window generator is implemented in `raw_pipeline/sliding_window_generator.py` and creates a CSV file with segments that are used for subsequent analysis.
 
 ## 2. Audio Feature Extraction
 
@@ -54,7 +56,7 @@ Both features are normalized to a 0-1 range before combination.
 The relative audio intensity is calculated using a rolling window approach to identify moments that are louder than the surrounding context:
 
 ```python
-# From audio/sentiment.py - extract_audio_intensity function
+# From audio/sentiment_nebius.py - extract_audio_intensity function
 # Calculate relative intensity (z-score) if rolling stats provided
 relative_intensity = 0.0
 if rolling_stats is not None:
@@ -79,119 +81,138 @@ This approach:
 3. Caps extreme values to prevent outliers from dominating
 4. Normalizes to a 0-1 range for easier integration
 
-The `RollingAudioStats` class handles this calculation efficiently.
+The `RollingAudioStats` class handles this calculation efficiently with optimizations for performance.
 
 ## 3. Speech Rate Factor
 
-Speech rate is calculated as words per second and then normalized:
+Speech rate is calculated as words per second and normalized for use in highlight detection:
 
 ```python
-# From audio/sentiment.py
-# Get speech rate factor (default to 1.0 if not provided)
-speech_rate_factor = 0.0
-if speech_rate is not None:
-    # Convert normalized speech rate to a 0-1 score
-    # A normalized rate of 1.0 (average) becomes 0.5
-    # Rates below average get lower scores, rates above average get higher scores
-    speech_rate_factor = min(1.0, max(0.0, (speech_rate - 0.5) * 0.5 + 0.5))
+# Normalize speech rate (assuming normal speech is 2-3 words per second)
+# Cap at 6 wps to avoid extreme values
+speech_rate_norm = min(speech_rate / 6.0, 1.0)
 ```
 
-This transformation:
-- Takes the normalized speech rate (where 1.0 is the average for the stream)
-- Maps it to a 0-1 range where 0.5 is average
+This approach:
+- Normalizes speech rate against a maximum of 6 words per second
 - Higher speech rates (faster talking) get higher scores
 - Lower speech rates (slower talking) get lower scores
 
 ## 4. Emotion and Sentiment Analysis
 
-The system analyzes the text content for emotions and sentiment:
+The system now uses the Nebius API with LLM models for emotion and sentiment analysis:
 
 ### 4.1 Emotion Analysis
 
-The system uses a Hugging Face model to classify text into emotion categories, which are then mapped to five main emotions:
+The system uses the Nebius API to classify text into five main emotion categories:
 - Excitement
 - Funny
 - Happiness
 - Anger
 - Sadness
 
-The emotion with the highest score becomes the "mapped_emotion" for the segment.
+The system prompt instructs the model to:
+1. Calibrate the baseline so most segments score low (<0.3) on emotion categories unless there's clear evidence
+2. Only award high emotion scores (>0.7) when the language strongly signals that emotion
+3. Decide the highlight score based on whether the segment has genuine "viral potential"
 
 ### 4.2 Emotion Intensity
 
-The emotion intensity represents how strongly the dominant emotion is expressed:
+The emotion intensity represents the average strength of emotions expressed:
 
 ```python
-# Calculate emotion intensity (how strong the emotion is)
-emotion_intensity = scores[mapped_emotion] if mapped_emotion != 'neutral' else 0.0
+# Get average emotion score (excluding neutral)
+emotion_score = (
+    sentiment.get('excitement', 0.0) +
+    sentiment.get('funny', 0.0) +
+    sentiment.get('happiness', 0.0) +
+    sentiment.get('anger', 0.0) +
+    sentiment.get('sadness', 0.0)
+) / 5.0
 ```
 
 ### 4.3 Sentiment Analysis
 
-Sentiment analysis produces a score from -1 (negative) to 1 (positive). For highlight calculation, the absolute value is used to measure intensity regardless of polarity:
-
-```python
-# Calculate sentiment intensity (how strong the sentiment is)
-sentiment_intensity = abs(scores['sentiment_score'])
-```
+Sentiment analysis produces a score from -1 (negative) to 1 (positive), which is included in the Nebius API response.
 
 ## 5. Highlight Score Calculation
 
-The final highlight score combines all these factors with weighted importance:
+The current implementation uses a blend of model-generated highlight scores and calculated scores based on audio features:
 
 ```python
-# From audio/sentiment.py - generate_scores_with_precomputed_results function
-# Combine all factors for highlight score with rebalanced weights
-scores['highlight_score'] = (
-    highlight_base * 0.30 +                # Base score from emotion type (30% weight)
-    emotion_intensity * 0.20 +             # Emotion intensity (20% weight)
-    sentiment_intensity * 0.10 +           # Sentiment intensity (10% weight)
-    absolute_intensity * 0.05 +            # Absolute audio intensity (5% weight)
-    relative_intensity * 0.20 +            # Relative audio intensity (20% weight)
-    speech_rate_factor * 0.15              # Speech rate factor (15% weight)
+# Calculate base highlight score (without model score)
+base_highlight_score = (
+    (speech_rate_norm * 0.15) +
+    (rel_intensity * 0.15) +
+    (abs_intensity * 0.10) +
+    (emotion_score * 0.10)
+)
+
+# Scale the base score to account for the components' weights
+# This ensures the base score still contributes meaningfully
+# when combined with the model score
+base_highlight_score = base_highlight_score * (1.0 / 0.5)
+
+# If model already provided a highlight score, blend them
+if 'highlight_score' in sentiment and sentiment['highlight_score'] > 0:
+    model_highlight = sentiment['highlight_score']
+    # Blend 50% model score, 50% calculated score
+    highlight_score = (model_highlight * 0.5) + (base_highlight_score * 0.5)
+else:
+    # If no model score, use the base score
+    highlight_score = base_highlight_score
+```
+
+The current weighting is:
+- Model score (50%)
+- Speech rate (15%)
+- Relative loudness (15%)
+- Absolute loudness (10%)
+- Emotional intensity (10%)
+
+In the analysis.py file, there's additional processing for the highlight scores:
+
+```python
+# For Nebius-generated data
+data['weighted_highlight_score'] = (
+    data['highlight_score'] * 0.95 +    # Nebius highlight score (95%)
+    audio_intensity * 0.05              # Current audio intensity (5%)
+)
+
+# For legacy data without Nebius features
+data['weighted_highlight_score'] = (
+    data['highlight_score'] * 0.5 +      # Base highlight score
+    data['emotion_intensity'] * 0.2 +    # Emotion contribution
+    abs(data['sentiment_score']) * 0.1 + # Sentiment intensity contribution
+    audio_intensity * 0.2                # Audio intensity contribution
 )
 ```
 
-### 5.1 Highlight Base Score
+## 6. Peak Detection and Highlight Selection
 
-The base score depends on the type of emotion detected:
-
-```python
-highlight_base = 0.0
-mapped_emotion = next((e for e in ['excitement', 'funny', 'happiness', 'anger', 'sadness'] if scores[e] > 0), 'neutral')
-
-if mapped_emotion in ['excitement', 'funny', 'happiness']:
-    highlight_base = 0.5  # Positive emotions get higher base score
-elif mapped_emotion in ['anger', 'sadness']:
-    highlight_base = 0.3  # Negative emotions get lower base score
-```
-
-This gives a higher starting point for positive emotions (excitement, funny, happiness) compared to negative emotions (anger, sadness).
-
-### 5.2 Synergy Bonus
-
-An additional synergy bonus is applied when multiple factors align:
+After calculating highlight scores, the system identifies peak moments using signal processing techniques:
 
 ```python
-# Enhanced synergy bonus calculation
-# Boost score for segments with high emotion and either high relative audio intensity or high speech rate
-if emotion_intensity > 0.5 and (relative_intensity > 0.7 or speech_rate_factor > 0.7):
-    synergy_factor = max(relative_intensity, speech_rate_factor if speech_rate is not None else 0)
-    emotion_synergy = min(emotion_intensity, synergy_factor) * 0.2
+# For Nebius data, use more sensitive parameters
+peaks, properties = find_peaks(
+    data['weighted_highlight_score'],
+    distance=15,        # Reduced minimum distance between peaks
+    prominence=0.25,    # Lower prominence threshold
+    height=0.35         # Lower height threshold
+)
 
-    # Add extra bonus when ALL three factors align (emotion, audio, and speech rate)
-    # This rewards moments where everything comes together
-    if emotion_intensity > 0.6 and relative_intensity > 0.7 and speech_rate_factor > 0.7:
-        emotion_synergy += 0.1  # Additional fixed bonus for multi-factor alignment
-
-    scores['highlight_score'] += emotion_synergy
+# For legacy data, use the original parameters
+peaks, properties = find_peaks(
+    data['weighted_highlight_score'],
+    distance=20,        # Minimum samples between peaks
+    prominence=0.3,     # Minimum prominence of peaks
+    height=0.4          # Minimum height of peaks
+)
 ```
 
-This rewards segments where:
-- Strong emotions coincide with either loud audio or fast speech
-- An extra bonus is given when all three factors align
+The system then selects the top 10 highlights based on the weighted highlight score.
 
-## 6. Integration with Chat Analysis
+## 7. Integration with Chat Analysis
 
 The final step integrates the audio highlight score with chat analysis to create an enhanced highlight score:
 
@@ -212,24 +233,68 @@ The weights can be dynamically adjusted based on the characteristics of the stre
 audio_weight, chat_weight = determine_optimal_weights(audio_df, chat_df)
 ```
 
-The `determine_optimal_weights` function analyzes chat activity and emotion intensity to adjust the relative importance of audio vs. chat.
+The `determine_optimal_weights` function analyzes chat activity and emotion intensity to adjust the relative importance of audio vs. chat:
 
-## Potential Issues and Improvements
+```python
+# Adjust weights based on relative strengths
+# High chat activity → more weight to chat
+# High audio emotion → more weight to audio
+base_audio_weight = 0.6
+base_chat_weight = 0.4
 
-Based on the code analysis, here are potential issues that might affect the audio highlight score calculation:
+# Adjust for chat activity (more chat → more chat weight)
+chat_activity_factor = min(1.0, max(0.0, (chat_activity - 10) / 100))
 
-1. **Relative Intensity Calculation**: The z-score approach is sensitive to the distribution of audio energy in the rolling window. If there are long quiet periods followed by normal speech, normal speech might get artificially high scores.
+# Adjust for relative emotion intensity
+if audio_emotion_intensity > 0 and chat_emotion_intensity > 0:
+    emotion_ratio = audio_emotion_intensity / chat_emotion_intensity
+    emotion_factor = min(1.0, max(0.0, (emotion_ratio - 0.5) / 2))
+else:
+    emotion_factor = 0.5
 
-2. **Weight Balance**: The weights assigned to different factors (30% base emotion, 20% emotion intensity, etc.) might need adjustment based on empirical testing.
+# Calculate final weights
+audio_weight = base_audio_weight + (chat_activity_factor * 0.2) - (emotion_factor * 0.2)
+chat_weight = base_chat_weight - (chat_activity_factor * 0.2) + (emotion_factor * 0.2)
+```
 
-3. **Synergy Bonus Thresholds**: The thresholds for synergy bonuses (emotion > 0.5, relative_intensity > 0.7) might need tuning for different types of streams.
+## Emotional Coherence Analysis
 
-4. **Speech Rate Normalization**: The current approach normalizes speech rate against the stream average, which might not work well for streams with unusual speech patterns.
+The integration module also analyzes the coherence between streamer emotions (audio) and audience emotions (chat):
 
-5. **Emotion Model Accuracy**: The accuracy of the emotion classification directly impacts the highlight base score and emotion intensity components.
+```python
+# Apply relationship-specific adjustments
+if relationship == "synchronized":
+    # Perfect alignment between streamer and audience emotions
+    # This is likely a very genuine moment
+    coherence_bonus = 0.15
+elif relationship == "positive_aligned":
+    # Both positive but different emotions
+    # Still a good highlight candidate
+    coherence_bonus = 0.1
+elif relationship == "audience_positive":
+    # Audience positive despite streamer negative
+    # Could be entertaining (audience enjoying streamer's frustration)
+    coherence_bonus = 0.08
+elif relationship == "audience_negative":
+    # Audience negative despite streamer positive
+    # Could be controversial or divisive content
+    coherence_bonus = 0.05
+else:
+    coherence_bonus = 0.0
+```
+
+This adds a bonus to the highlight score based on the relationship between streamer and audience emotions.
 
 ## Conclusion
 
-The audio highlight score is a sophisticated metric that combines multiple factors to identify noteworthy moments in streams. The current implementation gives the highest weight to the emotion type and intensity (50% combined), followed by audio features (25% combined) and speech rate (15%).
+The audio highlight score calculation has evolved to use a more sophisticated approach that leverages LLM models through the Nebius API. The current implementation:
 
-The integration with chat analysis further enhances this score by incorporating audience reactions, creating a more comprehensive highlight detection system that considers both streamer and audience perspectives.
+1. Uses sliding windows to create meaningful segments
+2. Extracts audio features including absolute and relative loudness
+3. Analyzes emotions and sentiment using the Nebius API
+4. Calculates highlight scores using a blend of model predictions and audio features
+5. Identifies peak moments using signal processing techniques
+6. Integrates with chat analysis to create enhanced highlight scores
+7. Analyzes emotional coherence between streamer and audience
+
+This comprehensive approach creates a robust system for identifying noteworthy moments in Twitch streams that considers both the streamer's content and the audience's reactions.

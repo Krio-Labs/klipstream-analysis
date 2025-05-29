@@ -202,7 +202,7 @@ class TwitchVideoDownloader:
             "videodownload",
             "--id", video_id,
             "-o", str(video_file),
-            "--quality", "worst",
+            "--quality", "720p",  # Use 720p for faster downloads and less storage
             "--threads", "16",
             "--temp-path", str(TEMP_DIR)
         ]

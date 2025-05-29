@@ -30,6 +30,8 @@ from utils.logging_setup import setup_logger
 from utils.helpers import extract_video_id
 from utils.config import create_directories, BASE_DIR, USE_GCS
 from utils.file_manager import FileManager
+from utils.convex_client_updated import ConvexManager
+from convex_integration import STATUS_QUEUED, STATUS_DOWNLOADING, STATUS_FETCHING_CHAT, STATUS_TRANSCRIBING, STATUS_ANALYZING, STATUS_FINDING_HIGHLIGHTS, STATUS_COMPLETED, STATUS_FAILED
 
 # Import raw file processor from reorganized structure
 from raw_pipeline import process_raw_files
@@ -80,6 +82,9 @@ async def run_integrated_pipeline(url):
     start_time = time.time()
     stage_times = {}
 
+    # Initialize Convex client
+    convex_manager = ConvexManager()
+
     try:
         # Extract video ID
         video_id = extract_video_id(url)
@@ -91,6 +96,10 @@ async def run_integrated_pipeline(url):
         # Log configuration
         logger.info(f"Using base directory: {BASE_DIR}")
         logger.info(f"Using GCS for file storage: {USE_GCS}")
+
+        # Update Convex status to "Queued"
+        logger.info(f"Updating Convex status to '{STATUS_QUEUED}' for video ID: {video_id}")
+        convex_manager.update_video_status(video_id, STATUS_QUEUED)
 
         # Create required directories
         output_dir = BASE_DIR / "output"
@@ -163,6 +172,10 @@ async def run_integrated_pipeline(url):
         logger.info(f"Total Execution Time: {total_duration:.2f} seconds")
         logger.info("=" * 50)
 
+        # Update Convex status to "Completed"
+        logger.info(f"Updating Convex status to '{STATUS_COMPLETED}' for video ID: {video_id}")
+        convex_manager.update_video_status(video_id, STATUS_COMPLETED)
+
         return {
             "status": "completed",
             "video_id": video_id,
@@ -178,6 +191,23 @@ async def run_integrated_pipeline(url):
 
         end_time = time.time()
         total_duration = end_time - start_time
+
+        # Update Convex status to "Failed"
+        try:
+            # Try to get video_id from the exception context
+            if 'video_id' in locals():
+                logger.info(f"Updating Convex status to '{STATUS_FAILED}' for video ID: {video_id}")
+                convex_manager.update_video_status(video_id, STATUS_FAILED)
+            else:
+                # Try to extract video ID from URL
+                try:
+                    extracted_id = extract_video_id(url)
+                    logger.info(f"Updating Convex status to '{STATUS_FAILED}' for video ID: {extracted_id}")
+                    convex_manager.update_video_status(extracted_id, STATUS_FAILED)
+                except Exception as id_error:
+                    logger.error(f"Could not extract video ID from URL for status update: {str(id_error)}")
+        except Exception as status_error:
+            logger.error(f"Failed to update status to 'Failed': {str(status_error)}")
 
         return {
             "status": "failed",

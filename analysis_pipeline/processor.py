@@ -21,6 +21,8 @@ from utils.config import (
     USE_GCS
 )
 from utils.file_manager import FileManager
+from utils.convex_client_updated import ConvexManager
+from convex_integration import STATUS_QUEUED, STATUS_DOWNLOADING, STATUS_FETCHING_CHAT, STATUS_TRANSCRIBING, STATUS_ANALYZING, STATUS_FINDING_HIGHLIGHTS, STATUS_COMPLETED, STATUS_FAILED
 
 from .audio.sentiment_nebius import analyze_audio_sentiment
 from .audio.analysis import analyze_transcription_highlights, plot_metrics
@@ -49,7 +51,14 @@ async def process_analysis(video_id):
     Returns:
         dict: Dictionary with results and metadata
     """
+    # Initialize Convex client
+    convex_manager = ConvexManager()
+
     try:
+        # Update Convex status to "Analyzing"
+        logger.info(f"Updating Convex status to '{STATUS_ANALYZING}' for video ID: {video_id}")
+        convex_manager.update_video_status(video_id, STATUS_ANALYZING)
+
         # Initialize file manager
         file_manager = FileManager(video_id)
 
@@ -215,6 +224,11 @@ async def process_analysis(video_id):
 
             # Analyze audio transcription highlights
             logger.info("Step 6: Analyzing audio transcription highlights")
+
+            # Update Convex status to "Finding highlights"
+            logger.info(f"Updating Convex status to '{STATUS_FINDING_HIGHLIGHTS}' for video ID: {video_id}")
+            convex_manager.update_video_status(video_id, STATUS_FINDING_HIGHLIGHTS)
+
             audio_highlights_future = executor.submit(
                 analyze_transcription_highlights,
                 video_id,

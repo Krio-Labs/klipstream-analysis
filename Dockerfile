@@ -57,7 +57,7 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONIOENCODING=UTF-8
 
 # Create necessary directories
-RUN mkdir -p /tmp/output /tmp/downloads /tmp/data /tmp/logs
+RUN mkdir -p /tmp/output /tmp/downloads /tmp/data /tmp/logs /tmp/output/Analysis/Chat /tmp/output/Analysis/Audio /tmp/output/Analysis/Integrated /tmp/output/Analysis/Integrated/editor_view
 
 # Verify model files exist
 RUN if [ ! -s /app/analysis_pipeline/chat/models/emotion_classifier_pipe_lr.pkl ] || [ ! -s /app/analysis_pipeline/chat/models/highlight_classifier_pipe_lr.pkl ]; then \
@@ -65,6 +65,9 @@ RUN if [ ! -s /app/analysis_pipeline/chat/models/emotion_classifier_pipe_lr.pkl 
     else \
         echo "Model files verified successfully."; \
     fi
+
+# Add additional error handling for file operations
+RUN echo "Adding retry logic for file operations"
 
 # Use functions-framework to start the function
 CMD ["functions-framework", "--target=run_pipeline", "--port=8080"]

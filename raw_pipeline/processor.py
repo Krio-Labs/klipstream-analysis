@@ -5,6 +5,8 @@ This module orchestrates the raw file processing for Twitch VODs.
 """
 
 import shutil
+import time
+import asyncio
 import concurrent.futures
 from pathlib import Path
 
@@ -18,6 +20,9 @@ from utils.config import (
 )
 from utils.logging_setup import setup_logger
 from utils.file_manager import FileManager
+from utils.convex_client_updated import ConvexManager
+from convex_integration import STATUS_QUEUED, STATUS_DOWNLOADING, STATUS_FETCHING_CHAT, STATUS_TRANSCRIBING, STATUS_ANALYZING, STATUS_FINDING_HIGHLIGHTS, STATUS_COMPLETED, STATUS_FAILED
+from utils.helpers import extract_video_id
 
 from .downloader import TwitchVideoDownloader
 from .transcriber import TranscriptionHandler
@@ -46,6 +51,9 @@ async def process_raw_files(url):
     Returns:
         dict: Dictionary with results and metadata
     """
+    # Initialize Convex client
+    convex_manager = ConvexManager()
+
     try:
         # Clean up directories from previous runs
         logger.info("Cleaning up directories from previous runs...")
@@ -54,10 +62,35 @@ async def process_raw_files(url):
         # Create directory structure (already done by cleanup)
         logger.info("Directory structure created")
 
-        # Download video and audio
-        downloader = TwitchVideoDownloader()
-        download_result = await downloader.process_video(url)
-        video_id = download_result["video_id"]
+        # Extract video ID from URL
+        video_id = extract_video_id(url)
+
+        # Update Convex status to "Downloading"
+        logger.info(f"Updating Convex status to '{STATUS_DOWNLOADING}' for video ID: {video_id}")
+        convex_manager.update_video_status(video_id, STATUS_DOWNLOADING)
+
+        # Start video download and chat download in parallel
+        logger.info("Starting video download and chat download in parallel...")
+
+        # Update Convex status to "Fetching chat" alongside downloading
+        logger.info(f"Updating Convex status to '{STATUS_FETCHING_CHAT}' for video ID: {video_id}")
+        convex_manager.update_video_status(video_id, STATUS_FETCHING_CHAT)
+
+        # Use ThreadPoolExecutor for parallel downloads
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            # Start video download (async)
+            downloader = TwitchVideoDownloader()
+            download_future = asyncio.create_task(downloader.process_video(url))
+
+            # Start chat download (sync) in a separate thread
+            logger.info(f"Downloading chat data for video ID: {video_id}")
+            chat_future = executor.submit(download_chat_data, video_id)
+
+            # Wait for both tasks to complete
+            download_result = await download_future
+            chat_result = chat_future.result()
+
+            logger.info(f"Video download and chat download completed for video ID: {video_id}")
 
         # Create a dictionary to store all file paths
         files = {
@@ -66,19 +99,23 @@ async def process_raw_files(url):
             "audio_file": download_result["audio_file"]
         }
 
-        # Use ThreadPoolExecutor for parallel execution
+        # Add chat results to files dictionary
+        files.update(chat_result)
+
+        # Update Convex status to "Transcribing"
+        logger.info(f"Updating Convex status to '{STATUS_TRANSCRIBING}' for video ID: {video_id}")
+        convex_manager.update_video_status(video_id, STATUS_TRANSCRIBING)
+
+        # Generate transcript (depends on audio)
+        transcriber = TranscriptionHandler()
+        transcript_result = await transcriber.process_audio_files(
+            video_id,
+            str(download_result["audio_file"])
+        )
+        files.update(transcript_result)
+
+        # Use ThreadPoolExecutor for remaining parallel tasks
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            # Start chat download in parallel
-            chat_future = executor.submit(download_chat_data, video_id)
-
-            # Generate transcript (depends on audio)
-            transcriber = TranscriptionHandler()
-            transcript_result = await transcriber.process_audio_files(
-                video_id,
-                str(download_result["audio_file"])
-            )
-            files.update(transcript_result)
-
             # Generate sliding windows from transcript data
             logger.info(f"Generating sliding windows for video ID: {video_id}")
             sliding_window_future = executor.submit(
@@ -94,12 +131,10 @@ async def process_raw_files(url):
             )
 
             # Wait for parallel tasks to complete
-            chat_result = chat_future.result()
             sliding_window_result = sliding_window_future.result()
             waveform_result = waveform_future.result()
 
             # Update files dictionary
-            files.update(chat_result)
             files.update(waveform_result)
 
             # Add segments file to files dictionary if sliding window generation was successful

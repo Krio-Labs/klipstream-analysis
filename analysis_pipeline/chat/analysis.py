@@ -16,6 +16,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 from utils.logging_setup import setup_logger
+from utils.convex_client_updated import ConvexManager
+from convex_integration import STATUS_QUEUED, STATUS_DOWNLOADING, STATUS_TRANSCRIBING, STATUS_ANALYZING, STATUS_FINDING_HIGHLIGHTS, STATUS_COMPLETED, STATUS_FAILED
 
 # Set up logger
 logger = setup_logger("chat_analysis", "chat_analysis.log")

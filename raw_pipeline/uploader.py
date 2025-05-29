@@ -24,6 +24,8 @@ from utils.config import (
     GCP_SERVICE_ACCOUNT_PATH
 )
 from utils.logging_setup import setup_logger
+from utils.convex_client_updated import ConvexManager
+from convex_integration import STATUS_QUEUED, STATUS_DOWNLOADING, STATUS_TRANSCRIBING, STATUS_ANALYZING, STATUS_FINDING_HIGHLIGHTS, STATUS_COMPLETED, STATUS_FAILED
 
 # Set up logger
 logger = setup_logger("uploader", "gcs_upload.log")
@@ -202,18 +204,11 @@ def upload_files(video_id: str, specific_files: List[str] = None) -> List[Dict]:
 
 def upload_to_gcs(video_id, files):
     """
-    Upload only the 7 specific raw files to Google Cloud Storage:
-    1. Video file (.mp4)
-    2. Audio file (.wav)
-    3. Waveform file (.json)
-    4. Transcript paragraphs file (.csv)
-    5. Transcript words file (.csv)
-    6. Transcript segments file (.csv)
-    7. Chat file (.csv)
-
-    If GCS authentication fails, this function will log a warning and return an empty list
-    instead of raising an exception, allowing the pipeline to continue.
+    Upload only the 7 specific raw files to Google Cloud Storage
     """
+    # Initialize Convex client
+    convex_manager = ConvexManager()
+
     try:
         logger.info(f"Uploading raw files to GCS for {video_id}...")
 
@@ -253,6 +248,33 @@ def upload_to_gcs(video_id, files):
             logger.warning(f"Expected to upload 7 files, but uploaded {len(uploaded_files)} files")
 
         logger.info(f"Successfully uploaded {len(uploaded_files)} raw files to GCS")
+
+        # After uploading files, update Convex with URLs
+        url_updates = {}
+
+        # Check for transcript segments file
+        transcript_segments_result = next((r for r in uploaded_files if "segments.csv" in r["file_path"]), None)
+        if transcript_segments_result:
+            url_updates["transcriptUrl"] = transcript_segments_result["gcs_uri"]
+
+        # Check for transcript words file
+        transcript_words_result = next((r for r in uploaded_files if "words.csv" in r["file_path"]), None)
+        if transcript_words_result:
+            url_updates["transcriptWordUrl"] = transcript_words_result["gcs_uri"]
+
+        # Check for chat file
+        chat_result = next((r for r in uploaded_files if "_chat.csv" in r["file_path"]), None)
+        if chat_result:
+            url_updates["chatUrl"] = chat_result["gcs_uri"]
+
+        # Check for waveform file
+        waveform_result = next((r for r in uploaded_files if "waveform.json" in r["file_path"]), None)
+        if waveform_result:
+            url_updates["audiowaveUrl"] = waveform_result["gcs_uri"]
+
+        # Update Convex if we have any URLs to update
+        if url_updates:
+            convex_manager.update_video_urls(video_id, url_updates)
 
         return uploaded_files
     except Exception as e:

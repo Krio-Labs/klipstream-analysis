@@ -124,6 +124,8 @@ celerybeat.pid
 # Environments
 .env
 .env.yaml
+.env.local
+.env.*.local
 env/
 venv/
 ENV/
@@ -172,12 +174,12 @@ COPYRIGHT.txt
 THIRD-PARTY-LICENSES.txt
 
 # Project-specific executables and binaries
-TwitchDownloaderCLI
-TwitchDownloaderCLI_mac
-TwitchDownloaderCLI.exe
-ffmpeg
-ffmpeg_mac
-ffmpeg_mac.exe
+# TwitchDownloaderCLI
+# TwitchDownloaderCLI_mac
+# TwitchDownloaderCLI.exe
+# ffmpeg
+# ffmpeg_mac
+# ffmpeg_mac.exe
 
 # Log files
 *.log
@@ -236,7 +238,7 @@ gcp-service-account-key.json
 new-service-account-key.json
 
 # Data files
-*.pkl
+# *.pkl
 *.h5
 *.pt
 *.pth

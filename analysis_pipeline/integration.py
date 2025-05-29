@@ -18,6 +18,8 @@ from pathlib import Path
 
 from utils.config import ANALYSIS_BUCKET, GCP_SERVICE_ACCOUNT_PATH, USE_GCS
 from utils.file_manager import FileManager
+from utils.convex_client_updated import ConvexManager
+from convex_integration import STATUS_QUEUED, STATUS_DOWNLOADING, STATUS_FETCHING_CHAT, STATUS_TRANSCRIBING, STATUS_ANALYZING, STATUS_FINDING_HIGHLIGHTS, STATUS_COMPLETED, STATUS_FAILED
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -2243,17 +2245,34 @@ def run_integration(video_id):
 
     # Upload integrated analysis file to GCS
     try:
+        # Initialize Convex client
+        convex_manager = ConvexManager()
+
         if USE_GCS:
+            gcs_uri = None
+
             if file_manager.upload_to_gcs("integrated_analysis"):
                 logger.info(f"Successfully uploaded integrated analysis to GCS bucket: {ANALYSIS_BUCKET}")
+                # Get the GCS URI for the uploaded file
+                gcs_path = file_manager.get_gcs_path("integrated_analysis")
+                if gcs_path:
+                    gcs_uri = f"gs://{ANALYSIS_BUCKET}/{gcs_path}"
             else:
                 logger.warning("Failed to upload integrated analysis to GCS using file manager. Trying fallback method.")
                 # Fallback to old method
                 upload_result = upload_integrated_analysis_to_gcs(video_id, integrated_output_path)
                 if upload_result:
                     logger.info(f"Successfully uploaded integrated analysis to GCS bucket using fallback method")
+                    gcs_uri = upload_result.get("gcs_uri")
                 else:
                     logger.warning("Failed to upload integrated analysis to GCS. See logs for details.")
+
+            # Update Convex with the transcriptAnalysisUrl if we have a GCS URI
+            if gcs_uri:
+                logger.info(f"Updating Convex with transcriptAnalysisUrl: {gcs_uri}")
+                convex_manager.update_video_urls(video_id, {"transcriptAnalysisUrl": gcs_uri})
+            else:
+                logger.warning("No GCS URI available for transcriptAnalysisUrl update")
         else:
             logger.info("GCS uploads disabled. Skipping upload of integrated analysis.")
     except Exception as e:
@@ -2276,6 +2295,9 @@ def upload_integrated_analysis_to_gcs(video_id, file_path):
     Returns:
         dict: Information about the uploaded file or None if upload failed
     """
+    # Import os module to ensure it's available in this function's scope
+    import os
+
     try:
         logger.info(f"Using fallback method to upload integrated analysis file to GCS bucket: {ANALYSIS_BUCKET}")
 
