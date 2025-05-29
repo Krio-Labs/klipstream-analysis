@@ -7,7 +7,7 @@
 This project uses several API keys and sensitive configuration values that must be kept secure:
 
 - `DEEPGRAM_API_KEY` - Deepgram transcription service
-- `NEBIUS_API_KEY` - Nebius sentiment analysis service  
+- `NEBIUS_API_KEY` - Nebius sentiment analysis service
 - `GOOGLE_API_KEY` - Google Cloud services
 - `CONVEX_API_KEY` - Convex database access
 - `GCP_SERVICE_ACCOUNT_PATH` - Google Cloud service account key file

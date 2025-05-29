@@ -20,6 +20,16 @@ if [ ! -f .env.yaml ]; then
     exit 1
 fi
 
+# Load environment variables from .env.yaml
+echo "Loading environment variables from .env.yaml..."
+eval $(python3 -c "
+import yaml
+with open('.env.yaml', 'r') as f:
+    env_vars = yaml.safe_load(f)
+    for key, value in env_vars.items():
+        print(f'export {key}=\"{value}\"')
+")
+
 # Check if service account key exists
 if [ ! -f ./new-service-account-key.json ]; then
     echo "Error: Service account key file (new-service-account-key.json) not found."
@@ -67,7 +77,7 @@ gcloud run deploy ${SERVICE_NAME} \
   --platform managed \
   --region ${REGION} \
   --project ${PROJECT_ID} \
-  --update-env-vars="BASE_DIR=/tmp,USE_GCS=true,GCS_PROJECT=${PROJECT_ID},DEEPGRAM_API_KEY=1e5a68cb71082002e20ff76d687e2a2b18806e16,NEBIUS_API_KEY=eyJhbGciOiJIUzI1NiIsImtpZCI6IlV6SXJWd1h0dnprLVRvdzlLZWstc0M1akptWXBvX1VaVkxUZlpnMDRlOFUiLCJ0eXAiOiJKV1QifQ.eyJzdWIiOiJnb29nbGUtb2F1dGgyfDExMDM4NTEzODc2NTM4MjY4NzE0NyIsInNjb3BlIjoib3BlbmlkIG9mZmxpbmVfYWNjZXNzIiwiaXNzIjoiYXBpX2tleV9pc3N1ZXIiLCJhdWQiOlsiaHR0cHM6Ly9uZWJpdXMtaW5mZXJlbmNlLmV1LmF1dGgwLmNvbS9hcGkvdjIvIl0sImV4cCI6MTkwNDQwNDY4NSwidXVpZCI6ImM0ZDQzY2IyLWRjMDgtNDc0NS04NzkwLTgxNWMzNzUxYmM2YiIsIm5hbWUiOiJzZW50aW1lbnQiLCJleHBpcmVzX2F0IjoiMjAzMC0wNS0wN1QxNzoxODowNSswMDAwIn0.4s1jXdBv6AZ0tLbKwK2CpdK1zaipgKjCF9CNuwT9I-I" \
+  --update-env-vars="BASE_DIR=${BASE_DIR},USE_GCS=${USE_GCS},GCS_PROJECT=${GCS_PROJECT},DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY},NEBIUS_API_KEY=${NEBIUS_API_KEY},CONVEX_URL=${CONVEX_URL},CONVEX_API_KEY=${CONVEX_API_KEY},CONVEX_DEPLOYMENT=${CONVEX_DEPLOYMENT},AUTH0_DOMAIN=${AUTH0_DOMAIN},AUTH0_CLIENT_ID=${AUTH0_CLIENT_ID},AUTH0_CLIENT_SECRET=${AUTH0_CLIENT_SECRET}" \
   --cpu ${CPU} \
   --memory ${MEMORY} \
   --timeout ${TIMEOUT}s \

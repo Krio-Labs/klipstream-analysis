@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     gnupg \
     git \
+    git-lfs \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Google Cloud SDK
@@ -20,34 +21,32 @@ RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.c
 # Set working directory
 WORKDIR /app
 
-# Install Git LFS
-RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && \
-    apt-get install git-lfs && \
-    git lfs install
+# Initialize Git LFS
+RUN git lfs install
 
 # Copy requirements first for better caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy .gitattributes first to ensure LFS files are handled correctly
+COPY .gitattributes .
+
+# Copy application code (this will include LFS files)
 COPY . .
 
-# Install ffmpeg and download TwitchDownloaderCLI from the official repository
-RUN mkdir -p /app/raw_pipeline/bin /app/bin && \
-    apt-get update && \
-    cp $(which ffmpeg) /app/raw_pipeline/bin/ffmpeg && \
-    chmod +x /app/raw_pipeline/bin/ffmpeg && \
-    # Download and extract TwitchDownloaderCLI
-    wget -q https://github.com/lay295/TwitchDownloader/releases/download/1.55.7/TwitchDownloaderCLI-1.55.7-Linux-x64.zip -O /tmp/twitch-dl.zip && \
-    unzip -o /tmp/twitch-dl.zip -d /app/raw_pipeline/bin && \
-    chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI && \
-    cp /app/raw_pipeline/bin/TwitchDownloaderCLI /app/bin/TwitchDownloaderCLI && \
-    chmod +x /app/bin/TwitchDownloaderCLI && \
-    rm /tmp/twitch-dl.zip
-
-# Make sure the binary files are executable
-RUN chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI || true && \
-    chmod +x /app/raw_pipeline/bin/ffmpeg || true
+# Ensure binary files are executable and create necessary directories
+RUN mkdir -p /app/bin /tmp/.dotnet/bundle_extract && \
+    # Make our LFS binary files executable
+    chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI 2>/dev/null || echo "TwitchDownloaderCLI not found, will use system ffmpeg" && \
+    chmod +x /app/raw_pipeline/bin/ffmpeg_mac 2>/dev/null || echo "ffmpeg_mac not found" && \
+    chmod +x /app/raw_pipeline/bin/ffmpeg 2>/dev/null || echo "ffmpeg symlink not found" && \
+    # Copy system ffmpeg as backup if our binaries don't work
+    cp $(which ffmpeg) /app/bin/ffmpeg_system && \
+    chmod +x /app/bin/ffmpeg_system && \
+    # Create a fallback script for TwitchDownloaderCLI if needed
+    echo '#!/bin/bash' > /app/bin/twitch_fallback.sh && \
+    echo 'echo "TwitchDownloaderCLI fallback - binary not available"' >> /app/bin/twitch_fallback.sh && \
+    chmod +x /app/bin/twitch_fallback.sh
 
 # Set environment variables
 ENV PATH="/app/raw_pipeline/bin:${PATH}"
