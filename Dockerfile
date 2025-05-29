@@ -11,16 +11,16 @@ RUN apt-get update && apt-get install -y \
     git-lfs \
     ca-certificates \
     libc6 \
-    libgcc1 \
+    libgcc-s1 \
     libgssapi-krb5-2 \
-    libicu67 \
-    libssl1.1 \
+    libicu72 \
+    libssl3 \
     libstdc++6 \
     zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
 # Install .NET 6.0 runtime (required for TwitchDownloaderCLI)
-RUN wget https://packages.microsoft.com/config/debian/11/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
+RUN wget https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
     dpkg -i packages-microsoft-prod.deb && \
     rm packages-microsoft-prod.deb && \
     apt-get update && \
