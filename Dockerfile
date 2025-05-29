@@ -55,7 +55,8 @@ RUN mkdir -p /app/bin /tmp/.dotnet/bundle_extract && \
     # Make our LFS binary files executable
     chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI 2>/dev/null || echo "TwitchDownloaderCLI not found, will use system ffmpeg" && \
     chmod +x /app/raw_pipeline/bin/ffmpeg_mac 2>/dev/null || echo "ffmpeg_mac not found" && \
-    chmod +x /app/raw_pipeline/bin/ffmpeg 2>/dev/null || echo "ffmpeg symlink not found" && \
+    # Create symlink to system ffmpeg for TwitchDownloaderCLI
+    ln -sf $(which ffmpeg) /app/raw_pipeline/bin/ffmpeg && \
     # Copy system ffmpeg as backup if our binaries don't work
     cp $(which ffmpeg) /app/bin/ffmpeg_system && \
     chmod +x /app/bin/ffmpeg_system && \
