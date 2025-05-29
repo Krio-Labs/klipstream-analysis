@@ -89,15 +89,15 @@ def get_binary_paths():
         }
     else:  # Linux (Cloud Functions uses Linux)
         # Check if we're in a container environment (like Cloud Functions)
-        if os.path.exists("/app/bin/TwitchDownloaderCLI"):
+        if os.path.exists("/app/raw_pipeline/bin/TwitchDownloaderCLI"):
             return {
-                "twitch_downloader": "/app/bin/TwitchDownloaderCLI",
-                "ffmpeg": "/usr/bin/ffmpeg"
+                "twitch_downloader": "/app/raw_pipeline/bin/TwitchDownloaderCLI",
+                "ffmpeg": "/usr/bin/ffmpeg"  # Use system ffmpeg to avoid architecture issues
             }
         else:
             return {
                 "twitch_downloader": "./raw_pipeline/bin/TwitchDownloaderCLI",
-                "ffmpeg": "./raw_pipeline/bin/ffmpeg"
+                "ffmpeg": "ffmpeg"  # Use system ffmpeg
             }
 
 # Get binary paths

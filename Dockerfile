@@ -48,8 +48,8 @@ RUN mkdir -p /app/bin /tmp/.dotnet/bundle_extract && \
     echo 'echo "TwitchDownloaderCLI fallback - binary not available"' >> /app/bin/twitch_fallback.sh && \
     chmod +x /app/bin/twitch_fallback.sh
 
-# Set environment variables
-ENV PATH="/app/raw_pipeline/bin:${PATH}"
+# Set environment variables - prioritize system binaries over bundled ones
+ENV PATH="/usr/bin:/app/raw_pipeline/bin:${PATH}"
 ENV DOTNET_BUNDLE_EXTRACT_BASE_DIR="/tmp/.dotnet/bundle_extract"
 ENV PORT=8080
 ENV PYTHONUNBUFFERED=1
