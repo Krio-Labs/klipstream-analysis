@@ -1,6 +1,6 @@
 FROM python:3.10-slim
 
-# Install system dependencies
+# Install system dependencies including .NET runtime for TwitchDownloaderCLI
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     wget \
@@ -9,7 +9,23 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     git \
     git-lfs \
+    ca-certificates \
+    libc6 \
+    libgcc1 \
+    libgssapi-krb5-2 \
+    libicu67 \
+    libssl1.1 \
+    libstdc++6 \
+    zlib1g \
     && rm -rf /var/lib/apt/lists/*
+
+# Install .NET 6.0 runtime (required for TwitchDownloaderCLI)
+RUN wget https://packages.microsoft.com/config/debian/11/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
+    dpkg -i packages-microsoft-prod.deb && \
+    rm packages-microsoft-prod.deb && \
+    apt-get update && \
+    apt-get install -y dotnet-runtime-6.0 && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install Google Cloud SDK
 RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && \
