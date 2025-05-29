@@ -51,20 +51,9 @@ class TranscriptionHandler:
         if not api_key:
             raise ValueError("DEEPGRAM_API_KEY environment variable must be set or API key must be provided")
 
-        # Configure Deepgram client with extended timeout for large files
-        config = {
-            "api_key": api_key,
-            "options": {
-                "timeout": httpx.Timeout(
-                    connect=30.0,    # Connection timeout
-                    read=1800.0,     # Read timeout (30 minutes for large files)
-                    write=300.0,     # Write timeout (5 minutes)
-                    pool=60.0        # Pool timeout
-                )
-            }
-        }
-
-        self.deepgram = DeepgramClient(api_key, config=config)
+        # Initialize Deepgram client with API key
+        # Note: Deepgram SDK handles timeouts internally for large files
+        self.deepgram = DeepgramClient(api_key)
         logger.info("Deepgram API configured with extended timeouts for large files")
 
     async def process_audio_files(self, video_id, audio_file_path=None, output_dir=None):
@@ -163,24 +152,23 @@ class TranscriptionHandler:
                         # If we get here, transcription was successful
                         break
 
-                except (httpx.TimeoutException, httpx.WriteTimeout, httpx.ReadTimeout) as e:
-                    logger.warning(f"Transcription attempt {attempt + 1} failed with timeout: {str(e)}")
-                    if attempt < max_retries - 1:
-                        logger.info(f"Retrying in {retry_delay} seconds...")
-                        time.sleep(retry_delay)
-                        retry_delay *= 2  # Exponential backoff
+                except (httpx.TimeoutException, httpx.WriteTimeout, httpx.ReadTimeout, Exception) as e:
+                    # Check if it's a timeout-related error
+                    if "timeout" in str(e).lower() or "timed out" in str(e).lower():
+                        logger.warning(f"Transcription attempt {attempt + 1} failed with timeout: {str(e)}")
+                        if attempt < max_retries - 1:
+                            logger.info(f"Retrying in {retry_delay} seconds...")
+                            time.sleep(retry_delay)
+                            retry_delay *= 2  # Exponential backoff
+                        else:
+                            logger.error("All transcription attempts failed due to timeout")
+                            raise Exception(f"Transcription failed after {max_retries} attempts due to timeout: {str(e)}")
                     else:
-                        logger.error("All transcription attempts failed due to timeout")
-                        raise Exception(f"Transcription failed after {max_retries} attempts due to timeout: {str(e)}")
+                        # Handle non-timeout errors
+                        raise
 
-                except Exception as e:
-                    logger.error(f"Transcription attempt {attempt + 1} failed with error: {str(e)}")
-                    if attempt < max_retries - 1:
-                        logger.info(f"Retrying in {retry_delay} seconds...")
-                        time.sleep(retry_delay)
-                        retry_delay *= 2  # Exponential backoff
-                    else:
-                        logger.error("All transcription attempts failed")
+                    # If we reach here without breaking, all attempts failed
+                    if attempt == max_retries - 1:
                         # Try a fallback approach with simpler options
                         logger.info("Attempting fallback transcription with simplified options...")
                         try:
