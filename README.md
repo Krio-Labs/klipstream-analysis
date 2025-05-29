@@ -183,9 +183,11 @@ The system uses TwitchDownloaderCLI to download Twitch VODs and chat logs. Platf
 ### FFMPEG
 
 FFMPEG is used for audio extraction and processing. Platform-specific binaries are included:
-- `raw_pipeline/bin/ffmpeg` (Linux)
+- `raw_pipeline/bin/ffmpeg` (Linux - symbolic link to ffmpeg_mac)
 - `raw_pipeline/bin/ffmpeg_mac` (macOS)
 - `raw_pipeline/bin/ffmpeg.exe` (Windows)
+
+**Note**: All binary files are managed via Git LFS (Large File Storage) for efficient repository management. When cloning the repository, ensure you have Git LFS installed and run `git lfs pull` to download the binary files.
 
 ### Model Files
 
