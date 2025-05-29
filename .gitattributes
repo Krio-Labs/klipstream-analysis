@@ -1,7 +1,9 @@
-# Binary files
+# Binary files - TwitchDownloaderCLI executables
 raw_pipeline/bin/TwitchDownloaderCLI filter=lfs diff=lfs merge=lfs -text
 raw_pipeline/bin/TwitchDownloaderCLI_mac filter=lfs diff=lfs merge=lfs -text
 raw_pipeline/bin/TwitchDownloaderCLI.exe filter=lfs diff=lfs merge=lfs -text
+
+# Binary files - FFmpeg executables
 raw_pipeline/bin/ffmpeg filter=lfs diff=lfs merge=lfs -text
 raw_pipeline/bin/ffmpeg_mac filter=lfs diff=lfs merge=lfs -text
 raw_pipeline/bin/ffmpeg.exe filter=lfs diff=lfs merge=lfs -text
