@@ -196,171 +196,171 @@ class TranscriptionHandler:
                             logger.error(f"Fallback transcription failed: {str(fallback_error)}")
                             raise Exception(f"All transcription attempts failed. Last error: {str(e)}, Fallback error: {str(fallback_error)}")
 
-                # Save raw transcript to file
-                transcript_json_path = output_dir / f"{base_name}_transcript.json"
-                with open(transcript_json_path, 'w') as f:
-                    # Use to_json instead of to_dict to handle custom objects like Sentiment
-                    f.write(response.to_json(indent=2))
-                logger.info(f"Transcript JSON saved to: {transcript_json_path}")
+            # Save raw transcript to file
+            transcript_json_path = output_dir / f"{base_name}_transcript.json"
+            with open(transcript_json_path, 'w') as f:
+                # Use to_json instead of to_dict to handle custom objects like Sentiment
+                f.write(response.to_json(indent=2))
+            logger.info(f"Transcript JSON saved to: {transcript_json_path}")
 
-                # Extract the transcript results
-                transcript_result = response.results.channels[0].alternatives[0]
+            # Extract the transcript results
+            transcript_result = response.results.channels[0].alternatives[0]
 
-                # Save word-level timestamps (without sentiment as requested)
-                words_file = output_dir / f"{base_name}_words.csv"
-                with open(words_file, 'w', newline='', encoding='utf-8') as f:
+            # Save word-level timestamps (without sentiment as requested)
+            words_file = output_dir / f"{base_name}_words.csv"
+            with open(words_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+
+                # Simple header without sentiment columns
+                writer.writerow(['start_time', 'end_time', 'word'])
+
+                # Write each word with its timing information
+                for word in transcript_result.words:
+                    writer.writerow([
+                        word.start,  # Already in seconds
+                        word.end,
+                        word.word
+                    ])
+            logger.info(f"Word timestamps saved to: {words_file}")
+
+            # Extract and save paragraphs
+            paragraphs_file = output_dir / f"{base_name}_paragraphs.csv"
+
+            # Check if paragraphs are available in the response
+            if hasattr(transcript_result, 'paragraphs') and transcript_result.paragraphs and hasattr(transcript_result.paragraphs, 'paragraphs'):
+                logger.info(f"Processing paragraphs from Deepgram response")
+
+                with open(paragraphs_file, 'w', newline='', encoding='utf-8') as f:
                     writer = csv.writer(f)
 
                     # Simple header without sentiment columns
-                    writer.writerow(['start_time', 'end_time', 'word'])
+                    writer.writerow(['start_time', 'end_time', 'text'])
 
-                    # Write each word with its timing information
-                    for word in transcript_result.words:
+                    # Add debug logging to understand the paragraph structure
+                    logger.info(f"Paragraph object structure: {dir(transcript_result.paragraphs.paragraphs[0])}")
+
+                    # Get the full transcript text from the paragraphs object
+                    full_transcript = ""
+                    if hasattr(transcript_result.paragraphs, 'transcript'):
+                        full_transcript = transcript_result.paragraphs.transcript
+
+                    # Log the full transcript for debugging
+                    logger.info(f"Full transcript: {full_transcript[:100]}...")
+
+                    for paragraph in transcript_result.paragraphs.paragraphs:
+                        # Try to access the transcript attribute, fall back to text if not available
+                        paragraph_text = ""
+                        if hasattr(paragraph, 'transcript'):
+                            paragraph_text = paragraph.transcript
+                        elif hasattr(paragraph, 'text'):
+                            paragraph_text = paragraph.text
+
+                        # If still empty, try to extract from the full transcript using start/end times
+                        if not paragraph_text and full_transcript:
+                            # Find sentences that start and end within this paragraph's time range
+                            paragraph_sentences = []
+                            if hasattr(paragraph, 'sentences') and paragraph.sentences:
+                                for sentence in paragraph.sentences:
+                                    if hasattr(sentence, 'text') and sentence.text:
+                                        paragraph_sentences.append(sentence.text)
+                                    elif hasattr(sentence, 'transcript') and sentence.transcript:
+                                        paragraph_sentences.append(sentence.transcript)
+
+                            if paragraph_sentences:
+                                paragraph_text = " ".join(paragraph_sentences)
+                            else:
+                                # If we can't extract sentences, use the full transcript
+                                paragraph_text = full_transcript
+
+                        # Write paragraph without sentiment information
                         writer.writerow([
-                            word.start,  # Already in seconds
-                            word.end,
-                            word.word
+                            paragraph.start,  # Already in seconds
+                            paragraph.end,
+                            paragraph_text
                         ])
-                logger.info(f"Word timestamps saved to: {words_file}")
 
-                # Extract and save paragraphs
-                paragraphs_file = output_dir / f"{base_name}_paragraphs.csv"
+                logger.info(f"Paragraphs saved to: {paragraphs_file}")
+            else:
+                logger.warning("No paragraphs found in Deepgram response, creating paragraphs from sentences")
 
-                # Check if paragraphs are available in the response
-                if hasattr(transcript_result, 'paragraphs') and transcript_result.paragraphs and hasattr(transcript_result.paragraphs, 'paragraphs'):
-                    logger.info(f"Processing paragraphs from Deepgram response")
+                # If no paragraphs, try to create them from sentences or the full transcript
+                sentences = []
+                current_sentence = {"text": "", "start": 0, "end": 0, "words": []}
 
-                    with open(paragraphs_file, 'w', newline='', encoding='utf-8') as f:
-                        writer = csv.writer(f)
+                for word in transcript_result.words:
+                    # If the word ends with punctuation that typically ends a sentence
+                    # Check if punctuated_word exists and has content
+                    has_end_punctuation = False
+                    if hasattr(word, 'punctuated_word') and word.punctuated_word:
+                        if word.punctuated_word[-1] in ['.', '!', '?']:
+                            has_end_punctuation = True
 
-                        # Simple header without sentiment columns
-                        writer.writerow(['start_time', 'end_time', 'text'])
-
-                        # Add debug logging to understand the paragraph structure
-                        logger.info(f"Paragraph object structure: {dir(transcript_result.paragraphs.paragraphs[0])}")
-
-                        # Get the full transcript text from the paragraphs object
-                        full_transcript = ""
-                        if hasattr(transcript_result.paragraphs, 'transcript'):
-                            full_transcript = transcript_result.paragraphs.transcript
-
-                        # Log the full transcript for debugging
-                        logger.info(f"Full transcript: {full_transcript[:100]}...")
-
-                        for paragraph in transcript_result.paragraphs.paragraphs:
-                            # Try to access the transcript attribute, fall back to text if not available
-                            paragraph_text = ""
-                            if hasattr(paragraph, 'transcript'):
-                                paragraph_text = paragraph.transcript
-                            elif hasattr(paragraph, 'text'):
-                                paragraph_text = paragraph.text
-
-                            # If still empty, try to extract from the full transcript using start/end times
-                            if not paragraph_text and full_transcript:
-                                # Find sentences that start and end within this paragraph's time range
-                                paragraph_sentences = []
-                                if hasattr(paragraph, 'sentences') and paragraph.sentences:
-                                    for sentence in paragraph.sentences:
-                                        if hasattr(sentence, 'text') and sentence.text:
-                                            paragraph_sentences.append(sentence.text)
-                                        elif hasattr(sentence, 'transcript') and sentence.transcript:
-                                            paragraph_sentences.append(sentence.transcript)
-
-                                if paragraph_sentences:
-                                    paragraph_text = " ".join(paragraph_sentences)
-                                else:
-                                    # If we can't extract sentences, use the full transcript
-                                    paragraph_text = full_transcript
-
-                            # Write paragraph without sentiment information
-                            writer.writerow([
-                                paragraph.start,  # Already in seconds
-                                paragraph.end,
-                                paragraph_text
-                            ])
-
-                    logger.info(f"Paragraphs saved to: {paragraphs_file}")
-                else:
-                    logger.warning("No paragraphs found in Deepgram response, creating paragraphs from sentences")
-
-                    # If no paragraphs, try to create them from sentences or the full transcript
-                    sentences = []
-                    current_sentence = {"text": "", "start": 0, "end": 0, "words": []}
-
-                    for word in transcript_result.words:
-                        # If the word ends with punctuation that typically ends a sentence
-                        # Check if punctuated_word exists and has content
-                        has_end_punctuation = False
-                        if hasattr(word, 'punctuated_word') and word.punctuated_word:
-                            if word.punctuated_word[-1] in ['.', '!', '?']:
-                                has_end_punctuation = True
-
-                        if has_end_punctuation:
-                            current_sentence["words"].append(word)
-                            current_sentence["text"] += " " + word.word
-                            current_sentence["end"] = word.end
-                            sentences.append(current_sentence)
-                            current_sentence = {"text": "", "start": word.end, "end": 0, "words": []}
-                        else:
-                            if not current_sentence["words"]:
-                                current_sentence["start"] = word.start
-                            current_sentence["words"].append(word)
-                            current_sentence["text"] += " " + word.word
-                            current_sentence["end"] = word.end
-
-                    # Add the last sentence if it's not empty
-                    if current_sentence["words"]:
+                    if has_end_punctuation:
+                        current_sentence["words"].append(word)
+                        current_sentence["text"] += " " + word.word
+                        current_sentence["end"] = word.end
                         sentences.append(current_sentence)
+                        current_sentence = {"text": "", "start": word.end, "end": 0, "words": []}
+                    else:
+                        if not current_sentence["words"]:
+                            current_sentence["start"] = word.start
+                        current_sentence["words"].append(word)
+                        current_sentence["text"] += " " + word.word
+                        current_sentence["end"] = word.end
 
-                    # Group sentences into paragraphs (every 3-5 sentences)
-                    paragraphs = []
-                    current_paragraph = {"text": "", "start": 0, "end": 0, "sentences": []}
-                    sentence_count = 0
+                # Add the last sentence if it's not empty
+                if current_sentence["words"]:
+                    sentences.append(current_sentence)
 
-                    for sentence in sentences:
-                        if not current_paragraph["sentences"]:
-                            current_paragraph["start"] = sentence["start"]
+                # Group sentences into paragraphs (every 3-5 sentences)
+                paragraphs = []
+                current_paragraph = {"text": "", "start": 0, "end": 0, "sentences": []}
+                sentence_count = 0
 
-                        current_paragraph["sentences"].append(sentence)
-                        current_paragraph["text"] += sentence["text"]
-                        current_paragraph["end"] = sentence["end"]
-                        sentence_count += 1
+                for sentence in sentences:
+                    if not current_paragraph["sentences"]:
+                        current_paragraph["start"] = sentence["start"]
 
-                        # Create a new paragraph after 3-5 sentences or if there's a long pause
-                        if sentence_count >= 3:
-                            paragraphs.append(current_paragraph)
-                            current_paragraph = {"text": "", "start": 0, "end": 0, "sentences": []}
-                            sentence_count = 0
+                    current_paragraph["sentences"].append(sentence)
+                    current_paragraph["text"] += sentence["text"]
+                    current_paragraph["end"] = sentence["end"]
+                    sentence_count += 1
 
-                    # Add the last paragraph if it's not empty
-                    if current_paragraph["sentences"]:
+                    # Create a new paragraph after 3-5 sentences or if there's a long pause
+                    if sentence_count >= 3:
                         paragraphs.append(current_paragraph)
+                        current_paragraph = {"text": "", "start": 0, "end": 0, "sentences": []}
+                        sentence_count = 0
 
-                    # Save paragraphs to CSV
-                    with open(paragraphs_file, 'w', newline='', encoding='utf-8') as f:
-                        writer = csv.writer(f)
+                # Add the last paragraph if it's not empty
+                if current_paragraph["sentences"]:
+                    paragraphs.append(current_paragraph)
 
-                        # Simple header without sentiment columns
-                        writer.writerow(['start_time', 'end_time', 'text'])
+                # Save paragraphs to CSV
+                with open(paragraphs_file, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
 
-                        # Write each paragraph without sentiment information
-                        for para in paragraphs:
-                            writer.writerow([
-                                para["start"],
-                                para["end"],
-                                para["text"].strip()
-                            ])
+                    # Simple header without sentiment columns
+                    writer.writerow(['start_time', 'end_time', 'text'])
 
-                    logger.info(f"Created and saved {len(paragraphs)} paragraphs to: {paragraphs_file}")
+                    # Write each paragraph without sentiment information
+                    for para in paragraphs:
+                        writer.writerow([
+                            para["start"],
+                            para["end"],
+                            para["text"].strip()
+                        ])
 
-                # Keep the transcript JSON file for reference
-                logger.info(f"Transcript JSON file is saved at: {transcript_json_path}")
+                logger.info(f"Created and saved {len(paragraphs)} paragraphs to: {paragraphs_file}")
 
-                return {
-                    "paragraphs_file": paragraphs_file,
-                    "words_file": words_file,
-                    "transcript_json_file": transcript_json_path
-                }
+            # Keep the transcript JSON file for reference
+            logger.info(f"Transcript JSON file is saved at: {transcript_json_path}")
+
+            return {
+                "paragraphs_file": paragraphs_file,
+                "words_file": words_file,
+                "transcript_json_file": transcript_json_path
+            }
 
         except Exception as e:
             logger.error(f"Transcription error: {str(e)}")
