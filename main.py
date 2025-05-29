@@ -116,6 +116,7 @@ async def run_integrated_pipeline(url):
 
         # STAGE 1: Raw Pipeline
         logger.info("STAGE 1: Starting Raw Pipeline")
+        logger.info("This stage includes: video download, audio extraction, transcription, waveform generation, and chat download")
         raw_start = time.time()
 
         try:
@@ -126,7 +127,7 @@ async def run_integrated_pipeline(url):
             raw_end = time.time()
             raw_duration = raw_end - raw_start
             stage_times["raw_pipeline"] = raw_duration
-            logger.info(f"Raw pipeline completed in {raw_duration:.2f} seconds")
+            logger.info(f"Raw pipeline completed successfully in {raw_duration:.2f} seconds")
 
             # Extract necessary information from raw pipeline result
             video_id = raw_result["video_id"]

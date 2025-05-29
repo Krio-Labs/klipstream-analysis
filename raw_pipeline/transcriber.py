@@ -7,6 +7,8 @@ This module handles transcribing audio files using Deepgram.
 import os
 import csv
 import json
+import time
+import httpx
 from pathlib import Path
 from deepgram import DeepgramClient, PrerecordedOptions, FileSource
 
@@ -27,16 +29,43 @@ class TranscriptionHandler:
         """Initialize the transcription handler"""
         self._setup_deepgram(api_key)
 
+    def _check_file_size(self, audio_file):
+        """Check if audio file is too large and suggest chunking"""
+        file_size = os.path.getsize(audio_file)
+        file_size_mb = file_size / (1024 * 1024)
+
+        logger.info(f"Audio file size: {file_size_mb:.2f} MB")
+
+        # Warn if file is very large (>500MB)
+        if file_size_mb > 500:
+            logger.warning(f"Large audio file detected ({file_size_mb:.2f} MB). This may cause memory issues.")
+            logger.warning("Consider using audio chunking for files larger than 500MB.")
+
+        return file_size_mb
+
     def _setup_deepgram(self, api_key=None):
-        """Set up Deepgram with API key"""
+        """Set up Deepgram with API key and timeout configuration"""
         # Use provided API key or get from environment
         api_key = api_key or DEEPGRAM_API_KEY or os.environ.get("DEEPGRAM_API_KEY")
 
         if not api_key:
             raise ValueError("DEEPGRAM_API_KEY environment variable must be set or API key must be provided")
 
-        self.deepgram = DeepgramClient(api_key)
-        logger.info("Deepgram API configured")
+        # Configure Deepgram client with extended timeout for large files
+        config = {
+            "api_key": api_key,
+            "options": {
+                "timeout": httpx.Timeout(
+                    connect=30.0,    # Connection timeout
+                    read=1800.0,     # Read timeout (30 minutes for large files)
+                    write=300.0,     # Write timeout (5 minutes)
+                    pool=60.0        # Pool timeout
+                )
+            }
+        }
+
+        self.deepgram = DeepgramClient(api_key, config=config)
+        logger.info("Deepgram API configured with extended timeouts for large files")
 
     async def process_audio_files(self, video_id, audio_file_path=None, output_dir=None):
         """
@@ -82,6 +111,9 @@ class TranscriptionHandler:
             # Get base name for output files
             base_name = f"audio_{video_id}"
 
+            # Check file size and warn if too large
+            file_size_mb = self._check_file_size(audio_file)
+
             # Transcribe audio
             logger.info(f"Processing audio file: {audio_file}")
             logger.info(f"Saving transcripts to: {output_dir}")
@@ -97,23 +129,84 @@ class TranscriptionHandler:
                 keyterm=["Chat", "Thank you for the Tier 1"]
             )
 
-            # Open the audio file
-            with open(audio_file, 'rb') as audio:
-                # Get transcript from Deepgram
-                logger.info("Sending audio to Deepgram for transcription...")
-                # Read the file content
-                audio_data = audio.read()
-                # Send to Deepgram using the format from the sample code
-                # Create a FileSource object with the audio data
-                payload: FileSource = {
-                    "buffer": audio_data,
-                }
-                # Call the transcribe_file method with the payload and options
-                # Using the prerecorded endpoint with the correct API structure
-                response = self.deepgram.listen.prerecorded.v("1").transcribe_file(payload, options)
+            # Open the audio file and transcribe with retry logic
+            max_retries = 3
+            retry_delay = 30  # Start with 30 seconds
 
-                if not response or not response.results:
-                    raise Exception("Transcription failed: No results returned from Deepgram")
+            for attempt in range(max_retries):
+                try:
+                    with open(audio_file, 'rb') as audio:
+                        # Get transcript from Deepgram
+                        logger.info(f"Sending audio to Deepgram for transcription (attempt {attempt + 1}/{max_retries})...")
+
+                        # Read the file content
+                        audio_data = audio.read()
+                        file_size_mb = len(audio_data) / (1024 * 1024)
+                        logger.info(f"Audio file size: {file_size_mb:.2f} MB")
+
+                        # Create a FileSource object with the audio data
+                        payload: FileSource = {
+                            "buffer": audio_data,
+                        }
+
+                        # Call the transcribe_file method with the payload and options
+                        # Using the prerecorded endpoint with the correct API structure
+                        start_time = time.time()
+                        response = self.deepgram.listen.prerecorded.v("1").transcribe_file(payload, options)
+                        transcription_time = time.time() - start_time
+
+                        logger.info(f"Transcription completed in {transcription_time:.2f} seconds")
+
+                        if not response or not response.results:
+                            raise Exception("Transcription failed: No results returned from Deepgram")
+
+                        # If we get here, transcription was successful
+                        break
+
+                except (httpx.TimeoutException, httpx.WriteTimeout, httpx.ReadTimeout) as e:
+                    logger.warning(f"Transcription attempt {attempt + 1} failed with timeout: {str(e)}")
+                    if attempt < max_retries - 1:
+                        logger.info(f"Retrying in {retry_delay} seconds...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                    else:
+                        logger.error("All transcription attempts failed due to timeout")
+                        raise Exception(f"Transcription failed after {max_retries} attempts due to timeout: {str(e)}")
+
+                except Exception as e:
+                    logger.error(f"Transcription attempt {attempt + 1} failed with error: {str(e)}")
+                    if attempt < max_retries - 1:
+                        logger.info(f"Retrying in {retry_delay} seconds...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                    else:
+                        logger.error("All transcription attempts failed")
+                        # Try a fallback approach with simpler options
+                        logger.info("Attempting fallback transcription with simplified options...")
+                        try:
+                            fallback_options = PrerecordedOptions(
+                                model="nova-2",  # Use older, more stable model
+                                language="en",
+                                smart_format=False,  # Disable smart formatting
+                                punctuate=True,
+                                paragraphs=False,  # Disable paragraphs to reduce complexity
+                                filler_words=False  # Disable filler words
+                            )
+
+                            with open(audio_file, 'rb') as audio:
+                                audio_data = audio.read()
+                                payload: FileSource = {"buffer": audio_data}
+                                response = self.deepgram.listen.prerecorded.v("1").transcribe_file(payload, fallback_options)
+
+                                if response and response.results:
+                                    logger.info("Fallback transcription succeeded!")
+                                    break
+                                else:
+                                    raise Exception("Fallback transcription also failed")
+
+                        except Exception as fallback_error:
+                            logger.error(f"Fallback transcription failed: {str(fallback_error)}")
+                            raise Exception(f"All transcription attempts failed. Last error: {str(e)}, Fallback error: {str(fallback_error)}")
 
                 # Save raw transcript to file
                 transcript_json_path = output_dir / f"{base_name}_transcript.json"
