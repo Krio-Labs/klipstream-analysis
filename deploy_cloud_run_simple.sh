@@ -12,7 +12,7 @@ SERVICE_NAME="klipstream-analysis"
 IMAGE_NAME="gcr.io/${PROJECT_ID}/${SERVICE_NAME}"
 CPU="8"
 MEMORY="32Gi"
-TIMEOUT="7200"  # Increased to 2 hours for large file processing
+TIMEOUT="3600"  # Maximum allowed by Cloud Run (1 hour)
 
 # Check if .env.yaml exists
 if [ ! -f .env.yaml ]; then
