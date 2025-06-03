@@ -31,7 +31,16 @@ from utils.helpers import extract_video_id
 from utils.config import create_directories, BASE_DIR, USE_GCS
 from utils.file_manager import FileManager
 from utils.convex_client_updated import ConvexManager
-from convex_integration import STATUS_QUEUED, STATUS_DOWNLOADING, STATUS_FETCHING_CHAT, STATUS_TRANSCRIBING, STATUS_ANALYZING, STATUS_FINDING_HIGHLIGHTS, STATUS_COMPLETED, STATUS_FAILED
+
+# Video processing status constants
+STATUS_QUEUED = "Queued"
+STATUS_DOWNLOADING = "Downloading"
+STATUS_FETCHING_CHAT = "Fetching chat"
+STATUS_TRANSCRIBING = "Transcribing"
+STATUS_ANALYZING = "Analyzing"
+STATUS_FINDING_HIGHLIGHTS = "Finding highlights"
+STATUS_COMPLETED = "Completed"
+STATUS_FAILED = "Failed"
 
 # Import raw file processor from reorganized structure
 from raw_pipeline import process_raw_files
