@@ -203,6 +203,23 @@ class ConvexAPIClient:
             logger.error(f"Error updating video URLs for Twitch ID {twitch_id}: {str(e)}")
             return False
 
+    def create_video(self, video_data: Dict[str, Any]) -> bool:
+        """
+        Create a new video entry in the database.
+
+        Note: This is a placeholder for future implementation.
+        Creating videos requires proper team and thumbnail setup.
+
+        Args:
+            video_data: Dictionary containing video data
+
+        Returns:
+            True if the creation was successful, False otherwise.
+        """
+        logger.warning("Video creation not implemented yet - requires proper team and thumbnail setup")
+        logger.info(f"Would create video with data: {video_data}")
+        return False
+
 # Example usage
 if __name__ == "__main__":
     import sys

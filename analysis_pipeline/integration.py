@@ -2250,35 +2250,54 @@ def run_integration(video_id):
 
         if USE_GCS:
             gcs_uri = None
+            upload_success = False
 
-            if file_manager.upload_to_gcs("integrated_analysis"):
-                logger.info(f"Successfully uploaded integrated analysis to GCS bucket: {ANALYSIS_BUCKET}")
-                # Get the GCS URI for the uploaded file
-                gcs_path = file_manager.get_gcs_path("integrated_analysis")
-                if gcs_path:
-                    gcs_uri = f"gs://{ANALYSIS_BUCKET}/{gcs_path}"
-            else:
-                logger.warning("Failed to upload integrated analysis to GCS using file manager. Trying fallback method.")
-                # Fallback to old method
-                upload_result = upload_integrated_analysis_to_gcs(video_id, integrated_output_path)
-                if upload_result:
-                    logger.info(f"Successfully uploaded integrated analysis to GCS bucket using fallback method")
-                    gcs_uri = upload_result.get("gcs_uri")
+            try:
+                if file_manager.upload_to_gcs("integrated_analysis"):
+                    logger.info(f"Successfully uploaded integrated analysis to GCS bucket: {ANALYSIS_BUCKET}")
+                    # Get the GCS URI for the uploaded file
+                    gcs_path = file_manager.get_gcs_path("integrated_analysis")
+                    if gcs_path:
+                        gcs_uri = f"gs://{ANALYSIS_BUCKET}/{gcs_path}"
+                        upload_success = True
                 else:
-                    logger.warning("Failed to upload integrated analysis to GCS. See logs for details.")
+                    logger.warning("Failed to upload integrated analysis to GCS using file manager. Trying fallback method.")
+            except Exception as upload_error:
+                logger.warning(f"File manager upload failed: {str(upload_error)}. Trying fallback method.")
+
+            # Try fallback method if primary upload failed
+            if not upload_success:
+                try:
+                    upload_result = upload_integrated_analysis_to_gcs(video_id, integrated_output_path)
+                    if upload_result:
+                        logger.info(f"Successfully uploaded integrated analysis to GCS bucket using fallback method")
+                        gcs_uri = upload_result.get("gcs_uri")
+                        upload_success = True
+                    else:
+                        logger.warning("Fallback upload method also failed.")
+                except Exception as fallback_error:
+                    logger.warning(f"Fallback upload failed: {str(fallback_error)}")
 
             # Update Convex with the transcriptAnalysisUrl if we have a GCS URI
-            if gcs_uri:
-                logger.info(f"Updating Convex with transcriptAnalysisUrl: {gcs_uri}")
-                convex_manager.update_video_urls(video_id, {"transcriptAnalysisUrl": gcs_uri})
+            if gcs_uri and upload_success:
+                try:
+                    logger.info(f"Updating Convex with transcriptAnalysisUrl: {gcs_uri}")
+                    convex_manager.update_video_urls(video_id, {"transcriptAnalysisUrl": gcs_uri})
+                except Exception as convex_error:
+                    logger.warning(f"Failed to update Convex with GCS URI: {str(convex_error)}")
             else:
-                logger.warning("No GCS URI available for transcriptAnalysisUrl update")
+                logger.warning("No GCS URI available for transcriptAnalysisUrl update - continuing without upload")
+                # In development mode, this is acceptable
+                if os.environ.get('ENVIRONMENT', 'development') == 'development':
+                    logger.info("Running in development mode - GCS upload failure is non-critical")
         else:
             logger.info("GCS uploads disabled. Skipping upload of integrated analysis.")
     except Exception as e:
-        logger.error(f"Error uploading integrated analysis to GCS: {str(e)}")
+        logger.error(f"Error in GCS upload process: {str(e)}")
         logger.warning("To fix GCS authentication issues, run: gcloud auth application-default login")
-        # Continue even if upload fails
+        # In development mode, continue even if upload fails
+        if os.environ.get('ENVIRONMENT', 'development') == 'development':
+            logger.info("Running in development mode - continuing despite GCS upload failure")
 
     logger.info("Integration completed successfully")
     return True

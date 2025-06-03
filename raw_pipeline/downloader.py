@@ -219,6 +219,38 @@ class TwitchVideoDownloader:
         logger.info(f"CLI file exists: {cli_file_exists}")
         logger.info(f"CLI file permissions: {cli_file_permissions}")
 
+        # Additional debugging for Cloud Run
+        if not cli_file_exists:
+            logger.error(f"TwitchDownloaderCLI not found at: {BINARY_PATHS['twitch_downloader']}")
+            # List contents of the bin directory
+            bin_dir = Path(BINARY_PATHS["twitch_downloader"]).parent
+            if bin_dir.exists():
+                logger.info(f"Contents of {bin_dir}: {list(bin_dir.iterdir())}")
+            else:
+                logger.error(f"Bin directory does not exist: {bin_dir}")
+            raise FileNotFoundError(f"TwitchDownloaderCLI not found at: {BINARY_PATHS['twitch_downloader']}")
+
+        # Test if the binary can be executed
+        try:
+            test_result = subprocess.run(
+                [BINARY_PATHS["twitch_downloader"], "--help"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if test_result.returncode != 0:
+                logger.error(f"TwitchDownloaderCLI test failed. Return code: {test_result.returncode}")
+                logger.error(f"Stderr: {test_result.stderr}")
+                raise RuntimeError(f"TwitchDownloaderCLI binary test failed")
+            else:
+                logger.info("TwitchDownloaderCLI binary test passed")
+        except subprocess.TimeoutExpired:
+            logger.error("TwitchDownloaderCLI test timed out")
+            raise RuntimeError("TwitchDownloaderCLI binary test timed out")
+        except Exception as e:
+            logger.error(f"Error testing TwitchDownloaderCLI binary: {str(e)}")
+            raise RuntimeError(f"Error testing TwitchDownloaderCLI binary: {str(e)}")
+
         # Create progress bar
         pbar = tqdm(total=100, desc=f"Downloading VOD {video_id}")
 

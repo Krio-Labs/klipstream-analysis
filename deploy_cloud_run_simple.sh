@@ -1,8 +1,9 @@
 #!/bin/bash
 set -e
 
-echo "===== KlipStream Analysis Deployment Script ====="
-echo "This script will deploy the KlipStream Analysis service to Google Cloud Run in the Klipstream project."
+echo "===== KlipStream Analysis Deployment Script (Phase 4) ====="
+echo "This script will deploy the FastAPI-based KlipStream Analysis service to Google Cloud Run."
+echo "Phase 4: Production deployment with backward compatibility and enhanced features."
 echo ""
 
 # Configuration
@@ -65,12 +66,14 @@ docker buildx build --platform linux/amd64 -t ${IMAGE_NAME} .
 echo "Pushing Docker image to Google Container Registry..."
 docker push ${IMAGE_NAME}
 
-# Deploy to Cloud Run
-echo "Deploying Cloud Run service with the following configuration:"
+# Deploy to Cloud Run with FastAPI optimizations
+echo "Deploying FastAPI-based Cloud Run service with the following configuration:"
 echo "- CPU: ${CPU}"
 echo "- Memory: ${MEMORY}"
 echo "- Timeout: ${TIMEOUT} seconds"
 echo "- Service Account: ${SERVICE_ACCOUNT_EMAIL}"
+echo "- Framework: FastAPI with uvicorn"
+echo "- Features: Async processing, real-time monitoring, queue management"
 
 gcloud run deploy ${SERVICE_NAME} \
   --image ${IMAGE_NAME} \
@@ -82,7 +85,10 @@ gcloud run deploy ${SERVICE_NAME} \
   --memory ${MEMORY} \
   --timeout ${TIMEOUT}s \
   --service-account ${SERVICE_ACCOUNT_EMAIL} \
-  --allow-unauthenticated
+  --allow-unauthenticated \
+  --max-instances 10 \
+  --concurrency 1000 \
+  --port 8080
 
 # Grant GCS permissions to the service account
 echo "Granting GCS permissions to service account..."
@@ -111,7 +117,43 @@ if [ $? -eq 0 ]; then
     --member="allUsers" \
     --role="roles/run.invoker"
 
-  echo "Service URL: $(gcloud run services describe ${SERVICE_NAME} --platform managed --region ${REGION} --format 'value(status.url)')"
+  # Get service URL
+  SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} --platform managed --region ${REGION} --format 'value(status.url)')
+  echo "Service URL: ${SERVICE_URL}"
+
+  # Wait for service to be ready and perform health check
+  echo "Waiting for service to be ready..."
+  sleep 30
+
+  echo "Performing health check..."
+  HEALTH_CHECK_URL="${SERVICE_URL}/health"
+
+  # Try health check with retries
+  for i in {1..5}; do
+    echo "Health check attempt ${i}/5..."
+    if curl -f -s "${HEALTH_CHECK_URL}" > /dev/null; then
+      echo "✅ Health check passed!"
+      echo "🚀 FastAPI service is running successfully!"
+      echo ""
+      echo "Available endpoints:"
+      echo "  - Health: ${SERVICE_URL}/health"
+      echo "  - API Docs: ${SERVICE_URL}/docs"
+      echo "  - New API: ${SERVICE_URL}/api/v1/"
+      echo "  - Legacy API: ${SERVICE_URL}/legacy/"
+      echo "  - Monitoring: ${SERVICE_URL}/api/v1/monitoring/dashboard"
+      echo "  - Queue: ${SERVICE_URL}/api/v1/queue/status"
+      break
+    else
+      echo "Health check failed, retrying in 10 seconds..."
+      sleep 10
+    fi
+
+    if [ $i -eq 5 ]; then
+      echo "⚠️  Health check failed after 5 attempts. Service may still be starting up."
+      echo "Please check the service logs if issues persist."
+    fi
+  done
+
 else
   echo "Deployment failed. Please check the error message above."
 fi

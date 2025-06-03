@@ -34,3 +34,8 @@ google-auth>=2.39.0
 
 # Async support
 aiohttp>=3.11.0
+
+# FastAPI and async web framework
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.5.0

@@ -115,7 +115,7 @@ class TranscriptionHandler:
                 punctuate=True,
                 paragraphs=True,
                 filler_words=True,
-                keyterm=["Chat", "Thank you for the Tier 1"]
+                keywords=["Chat", "Thank you for the Tier 1"]
             )
 
             # Open the audio file and transcribe with retry logic

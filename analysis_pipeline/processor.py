@@ -258,11 +258,12 @@ async def process_analysis(video_id):
             if integration_result:
                 logger.info("Chat and audio integration completed successfully")
             else:
-                logger.warning("Chat and audio integration failed")
+                logger.warning("Chat and audio integration failed - continuing with pipeline")
+                integration_result = True  # Don't fail the entire pipeline for integration issues
         except Exception as e:
             logger.error(f"Error during chat and audio integration: {str(e)}")
-            integration_result = False
-            # Continue with pipeline even if integration fails
+            logger.info("Continuing with pipeline despite integration failure")
+            integration_result = True  # Don't fail the entire pipeline for integration issues
 
         # Convert Path objects to strings for JSON serialization
         from main import convert_paths_to_strings

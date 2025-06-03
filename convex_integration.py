@@ -202,6 +202,18 @@ class ConvexIntegration:
 
         return self.update_urls(twitch_id, urls)
 
+    def create_video(self, video_data: Dict[str, Any]) -> bool:
+        """
+        Create a new video entry in the database.
+
+        Args:
+            video_data: Dictionary containing video data
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        return self.client.create_video(video_data)
+
 # Example usage
 if __name__ == "__main__":
     import sys
