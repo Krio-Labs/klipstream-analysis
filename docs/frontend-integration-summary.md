@@ -2,7 +2,23 @@
 
 ## 📋 Quick Overview
 
-This document provides a high-level summary of the frontend integration strategy for connecting your Next.js application with the new KlipStream Analysis FastAPI backend.
+This document provides a high-level summary of the frontend integration strategy for connecting your Next.js application with the **deployed KlipStream Analysis FastAPI backend** running on Google Cloud Run.
+
+## 🌐 **Production API Details**
+
+### **Live API Endpoint:**
+- **Base URL**: `https://klipstream-analysis-4vyl5ph7lq-uc.a.run.app`
+- **Status**: ✅ **LIVE & OPERATIONAL**
+- **Environment**: Production-ready with comprehensive error handling
+- **Revision**: `klipstream-analysis-00030-cvx`
+
+### **Key Endpoints:**
+- **Health Check**: `/health`
+- **API Documentation**: `/docs` (Interactive Swagger UI)
+- **Analysis API**: `/api/v1/analysis` (Start video analysis)
+- **Job Status**: `/api/v1/jobs/{job_id}/status` (Real-time progress)
+- **Monitoring**: `/api/v1/monitoring/dashboard` (System health)
+- **Queue Status**: `/api/v1/queue/status` (Job queue metrics)
 
 ## 🎯 Transformation Goals
 
@@ -83,6 +99,24 @@ This document provides a high-level summary of the frontend integration strategy
 | **Concurrent Jobs** | 1 | Multiple | **Unlimited** |
 | **Error Recovery** | Manual | Automatic | **100% automated** |
 | **System Visibility** | None | Full dashboard | **Complete transparency** |
+
+## ✅ **Current Status - PRODUCTION READY**
+
+### **Verified Working Features:**
+- ✅ **Video Downloads**: TwitchDownloaderCLI working correctly in Cloud Run
+- ✅ **Audio Extraction**: FFmpeg processing functional
+- ✅ **Transcription**: Deepgram API integration fixed and operational
+- ✅ **Database Integration**: Convex integration with graceful error handling
+- ✅ **File Storage**: Google Cloud Storage buckets configured
+- ✅ **Error Handling**: Comprehensive error recovery and logging
+- ✅ **Health Monitoring**: Real-time system health checks
+- ✅ **API Documentation**: Interactive Swagger UI available
+
+### **Recent Fixes Applied:**
+- 🔧 **Fixed TwitchDownloaderCLI binary issues** for Cloud Run environment
+- 🔧 **Corrected Deepgram API parameters** (keyterm → keywords)
+- 🔧 **Enhanced error handling** with development/production mode detection
+- 🔧 **Improved logging** for better debugging and monitoring
 
 ## 🎨 User Experience Enhancements
 
