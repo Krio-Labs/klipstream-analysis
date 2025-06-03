@@ -20,13 +20,13 @@ These files are stored in the following buckets:
 
 ## Current Authentication Implementation
 
-The codebase implements a multi-layered authentication approach with fallback mechanisms:
+The codebase implements a secure, multi-layered authentication approach with fallback mechanisms:
 
-1. **Primary Method**: Service account key file named `new-service-account-key.json` in the project root
-2. **Secondary Method**: Service account key file specified by the `GCP_SERVICE_ACCOUNT_PATH` environment variable
+1. **Primary Method (Production)**: Application Default Credentials using attached Cloud Run service account
+2. **Secondary Method (Development)**: Service account key file specified by the `GCP_SERVICE_ACCOUNT_PATH` environment variable
 3. **Fallback Method**: Application Default Credentials (ADC)
 
-This approach ensures that authentication works in both development and production environments.
+This approach prioritizes security by avoiding hardcoded key files in production while maintaining flexibility for development environments.
 
 ### Service Account Authentication
 

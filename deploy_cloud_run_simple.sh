@@ -31,12 +31,8 @@ with open('.env.yaml', 'r') as f:
         print(f'export {key}=\"{value}\"')
 ")
 
-# Check if service account key exists
-if [ ! -f ./new-service-account-key.json ]; then
-    echo "Error: Service account key file (new-service-account-key.json) not found."
-    echo "Please ensure the service account key file is in the project root directory."
-    exit 1
-fi
+# Note: Using attached service account instead of key file for better security
+echo "Using attached service account for authentication (more secure than key files)"
 
 # Set the project
 echo "Setting the project to: ${PROJECT_ID}"

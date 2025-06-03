@@ -312,15 +312,14 @@ class FileManager:
             if not local_path or not gcs_path or not bucket_name:
                 return False
 
-            # Use service account credentials instead of application default credentials
-            import os
-            service_account_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'new-service-account-key.json')
+            # Use environment-based authentication
+            from utils.config import GCP_SERVICE_ACCOUNT_PATH
 
-            if os.path.exists(service_account_path):
-                logger.info(f"Using service account credentials from {service_account_path}")
-                client = storage.Client.from_service_account_json(service_account_path, project=GCS_PROJECT)
+            if GCP_SERVICE_ACCOUNT_PATH and os.path.exists(GCP_SERVICE_ACCOUNT_PATH):
+                logger.info(f"Using service account credentials from {GCP_SERVICE_ACCOUNT_PATH}")
+                client = storage.Client.from_service_account_json(GCP_SERVICE_ACCOUNT_PATH, project=GCS_PROJECT)
             else:
-                logger.warning(f"Service account key file not found at {service_account_path}, falling back to application default credentials")
+                logger.info("Using application default credentials (Cloud Run service account)")
                 client = storage.Client(project=GCS_PROJECT)
 
             bucket = client.bucket(bucket_name)
@@ -461,14 +460,14 @@ class FileManager:
             file_size = os.path.getsize(local_path)
             logger.info(f"Uploading file {local_path} ({file_size/1024/1024:.2f} MB) to {bucket_name}/{gcs_path}")
 
-            # Use service account credentials instead of application default credentials
-            service_account_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'new-service-account-key.json')
+            # Use environment-based authentication
+            from utils.config import GCP_SERVICE_ACCOUNT_PATH
 
-            if os.path.exists(service_account_path):
-                logger.info(f"Using service account credentials from {service_account_path}")
-                client = storage.Client.from_service_account_json(service_account_path, project=GCS_PROJECT)
+            if GCP_SERVICE_ACCOUNT_PATH and os.path.exists(GCP_SERVICE_ACCOUNT_PATH):
+                logger.info(f"Using service account credentials from {GCP_SERVICE_ACCOUNT_PATH}")
+                client = storage.Client.from_service_account_json(GCP_SERVICE_ACCOUNT_PATH, project=GCS_PROJECT)
             else:
-                logger.warning(f"Service account key file not found at {service_account_path}, falling back to application default credentials")
+                logger.info("Using application default credentials (Cloud Run service account)")
                 client = storage.Client(project=GCS_PROJECT)
 
             bucket = client.bucket(bucket_name)

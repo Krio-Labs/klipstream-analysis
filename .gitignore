@@ -232,10 +232,22 @@ __pycache__/
 COPYRIGHT.txt
 THIRD-PARTY-LICENSES.txt
 
-# Google Cloud service account keys
+# Google Cloud service account keys and sensitive files
 gcp-service-account-key.json
 *-service-account-key.json
 new-service-account-key.json
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.csr
+
+# Environment files with secrets
+.env.production
+.env.staging
+.env.development
+*.env.local
 
 # Data files
 # *.pkl

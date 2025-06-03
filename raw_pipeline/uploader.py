@@ -25,7 +25,14 @@ from utils.config import (
 )
 from utils.logging_setup import setup_logger
 from utils.convex_client_updated import ConvexManager
-from convex_integration import STATUS_QUEUED, STATUS_DOWNLOADING, STATUS_TRANSCRIBING, STATUS_ANALYZING, STATUS_FINDING_HIGHLIGHTS, STATUS_COMPLETED, STATUS_FAILED
+# Video processing status constants
+STATUS_QUEUED = "Queued"
+STATUS_DOWNLOADING = "Downloading"
+STATUS_TRANSCRIBING = "Transcribing"
+STATUS_ANALYZING = "Analyzing"
+STATUS_FINDING_HIGHLIGHTS = "Finding highlights"
+STATUS_COMPLETED = "Completed"
+STATUS_FAILED = "Failed"
 
 # Set up logger
 logger = setup_logger("uploader", "gcs_upload.log")
@@ -77,33 +84,22 @@ def upload_file_to_gcs(file_path: str, video_id: str) -> Dict:
         # Determine bucket based on file type
         bucket_name = get_bucket_for_file(file_path)
 
-        # Create GCS client
-        # Try to use the new service account credentials
-        new_key_path = "./new-service-account-key.json"
-        if os.path.exists(new_key_path):
-            try:
-                logger.info(f"Using service account credentials from {new_key_path}")
-                # Load the service account key file to verify its contents
-                with open(new_key_path, 'r') as f:
-                    key_data = json.load(f)
-                    logger.info(f"Service account email: {key_data.get('client_email', 'Not found')}")
-                    logger.info(f"Project ID: {key_data.get('project_id', 'Not found')}")
-
+        # Create GCS client using environment-based authentication
+        try:
+            if GCP_SERVICE_ACCOUNT_PATH and os.path.exists(GCP_SERVICE_ACCOUNT_PATH):
+                logger.info(f"Using service account credentials from {GCP_SERVICE_ACCOUNT_PATH}")
                 credentials = service_account.Credentials.from_service_account_file(
-                    new_key_path,
+                    GCP_SERVICE_ACCOUNT_PATH,
                     scopes=["https://www.googleapis.com/auth/cloud-platform"]
                 )
-                client = storage.Client(credentials=credentials, project=key_data.get('project_id'))
-            except Exception as e:
-                logger.warning(f"Failed to use service account credentials: {str(e)}")
-                logger.warning(f"Exception type: {type(e).__name__}")
-                import traceback
-                logger.warning(f"Traceback: {traceback.format_exc()}")
-                logger.info("Falling back to application default credentials")
+                client = storage.Client(credentials=credentials)
+            else:
+                # Use application default credentials (recommended for Cloud Run)
+                logger.info("Using application default credentials (Cloud Run service account)")
                 client = storage.Client()
-        else:
-            # Use application default credentials
-            logger.info("No service account key file found, using application default credentials")
+        except Exception as e:
+            logger.warning(f"Failed to initialize GCS client: {str(e)}")
+            logger.info("Falling back to application default credentials")
             client = storage.Client()
 
         bucket = client.bucket(bucket_name)

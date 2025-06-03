@@ -6,7 +6,6 @@ a comprehensive analysis that leverages both audience reactions and streamer con
 """
 
 import os
-import json
 import pandas as pd
 import numpy as np
 import logging
@@ -19,7 +18,15 @@ from pathlib import Path
 from utils.config import ANALYSIS_BUCKET, GCP_SERVICE_ACCOUNT_PATH, USE_GCS
 from utils.file_manager import FileManager
 from utils.convex_client_updated import ConvexManager
-from convex_integration import STATUS_QUEUED, STATUS_DOWNLOADING, STATUS_FETCHING_CHAT, STATUS_TRANSCRIBING, STATUS_ANALYZING, STATUS_FINDING_HIGHLIGHTS, STATUS_COMPLETED, STATUS_FAILED
+# Video processing status constants
+STATUS_QUEUED = "Queued"
+STATUS_DOWNLOADING = "Downloading"
+STATUS_FETCHING_CHAT = "Fetching chat"
+STATUS_TRANSCRIBING = "Transcribing"
+STATUS_ANALYZING = "Analyzing"
+STATUS_FINDING_HIGHLIGHTS = "Finding highlights"
+STATUS_COMPLETED = "Completed"
+STATUS_FAILED = "Failed"
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -2333,34 +2340,8 @@ def upload_integrated_analysis_to_gcs(video_id, file_path):
 
         # Initialize GCS client
         try:
-            # Try to use the new service account credentials first (same as raw pipeline)
-            new_key_path = "./new-service-account-key.json"
-            if os.path.exists(new_key_path):
-                try:
-                    logger.info(f"Using service account credentials from {new_key_path}")
-                    # Load the service account key file to verify its contents
-                    with open(new_key_path, 'r') as f:
-                        key_data = json.load(f)
-                        logger.info(f"Service account email: {key_data.get('client_email', 'Not found')}")
-                        logger.info(f"Project ID: {key_data.get('project_id', 'Not found')}")
-
-                    credentials = service_account.Credentials.from_service_account_file(
-                        new_key_path,
-                        scopes=["https://www.googleapis.com/auth/cloud-platform"]
-                    )
-                    client = storage.Client(credentials=credentials, project=key_data.get('project_id'))
-                except Exception as e:
-                    logger.warning(f"Failed to use new service account credentials: {str(e)}")
-                    logger.warning(f"Exception type: {type(e).__name__}")
-                    # Fall back to GCP_SERVICE_ACCOUNT_PATH
-                    if GCP_SERVICE_ACCOUNT_PATH and os.path.exists(GCP_SERVICE_ACCOUNT_PATH):
-                        logger.info(f"Falling back to GCP_SERVICE_ACCOUNT_PATH: {GCP_SERVICE_ACCOUNT_PATH}")
-                        credentials = service_account.Credentials.from_service_account_file(GCP_SERVICE_ACCOUNT_PATH)
-                        client = storage.Client(credentials=credentials)
-                    else:
-                        logger.info("Falling back to application default credentials")
-                        client = storage.Client()
-            elif GCP_SERVICE_ACCOUNT_PATH and os.path.exists(GCP_SERVICE_ACCOUNT_PATH):
+            # Use environment-based service account path or application default credentials
+            if GCP_SERVICE_ACCOUNT_PATH and os.path.exists(GCP_SERVICE_ACCOUNT_PATH):
                 # Use service account credentials if available
                 logger.info(f"Using service account credentials from {GCP_SERVICE_ACCOUNT_PATH}")
                 credentials = service_account.Credentials.from_service_account_file(GCP_SERVICE_ACCOUNT_PATH)
