@@ -18,7 +18,26 @@ from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
 
 from utils.logging_setup import setup_logger
-from convex_integration import ConvexIntegration, STATUS_QUEUED, STATUS_DOWNLOADING, STATUS_FETCHING_CHAT, STATUS_TRANSCRIBING, STATUS_ANALYZING, STATUS_FINDING_HIGHLIGHTS, STATUS_COMPLETED, STATUS_FAILED
+# Video processing status constants
+STATUS_QUEUED = "Queued"
+STATUS_DOWNLOADING = "Downloading"
+STATUS_FETCHING_CHAT = "Fetching chat"
+STATUS_TRANSCRIBING = "Transcribing"
+STATUS_ANALYZING = "Analyzing"
+STATUS_FINDING_HIGHLIGHTS = "Finding highlights"
+STATUS_COMPLETED = "Completed"
+STATUS_FAILED = "Failed"
+
+# Import ConvexIntegration class (placeholder for now)
+class ConvexIntegration:
+    def __init__(self, url, api_key):
+        self.url = url
+        self.api_key = api_key
+        logger.info(f"ConvexIntegration initialized with URL: {url}")
+
+    def update_video_status(self, video_id, status):
+        logger.info(f"Would update video {video_id} status to {status}")
+        return True
 
 # Set up logger
 logger = setup_logger("convex_client", "convex_client.log")
