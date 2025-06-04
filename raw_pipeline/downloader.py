@@ -267,20 +267,53 @@ class TwitchVideoDownloader:
         last_update_time = time.time()
         progress_detected = False
 
-        # Run the command
+        # Run the command with timeout
         logger.info(f"Running command: {' '.join(command)}")
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+        except Exception as e:
+            logger.error(f"Failed to start video download process: {str(e)}")
+            raise RuntimeError(f"Failed to start video download process: {str(e)}")
+
+        # Set a timeout for the entire download process (30 minutes)
+        download_timeout = 30 * 60  # 30 minutes in seconds
+        start_time = time.time()
 
         # Process output to update progress bar
         while True:
-            line = await process.stdout.readline()
+            # Check for timeout
+            current_time = time.time()
+            if current_time - start_time > download_timeout:
+                logger.error(f"Video download timed out after {download_timeout} seconds")
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
+                raise RuntimeError(f"Video download timed out after {download_timeout} seconds")
+
+            try:
+                # Use asyncio.wait_for to add a timeout to readline
+                line = await asyncio.wait_for(process.stdout.readline(), timeout=30)
+            except asyncio.TimeoutError:
+                logger.warning("No output from video download process for 30 seconds, checking if process is still alive")
+                if process.returncode is not None:
+                    logger.info("Process has completed")
+                    break
+                continue
+
             if not line:
                 # Check if stderr has any data
-                err_line = await process.stderr.readline()
+                try:
+                    err_line = await asyncio.wait_for(process.stderr.readline(), timeout=5)
+                except asyncio.TimeoutError:
+                    err_line = None
+
                 if not err_line:
                     break
                 else:
@@ -444,9 +477,33 @@ class TwitchVideoDownloader:
             stderr=asyncio.subprocess.PIPE
         )
 
+        # Set timeout for audio extraction (15 minutes)
+        audio_timeout = 15 * 60  # 15 minutes in seconds
+        start_time = time.time()
+
         # Process output to update progress bar
         while True:
-            line = await process.stderr.readline()
+            # Check for timeout
+            current_time = time.time()
+            if current_time - start_time > audio_timeout:
+                logger.error(f"Audio extraction timed out after {audio_timeout} seconds")
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
+                raise RuntimeError(f"Audio extraction timed out after {audio_timeout} seconds")
+
+            try:
+                line = await asyncio.wait_for(process.stderr.readline(), timeout=30)
+            except asyncio.TimeoutError:
+                logger.warning("No output from audio extraction process for 30 seconds, checking if process is still alive")
+                if process.returncode is not None:
+                    logger.info("Audio extraction process has completed")
+                    break
+                continue
+
             if not line:
                 break
 
