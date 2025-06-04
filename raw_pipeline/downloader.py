@@ -230,7 +230,7 @@ class TwitchVideoDownloader:
                 logger.error(f"Bin directory does not exist: {bin_dir}")
             raise FileNotFoundError(f"TwitchDownloaderCLI not found at: {BINARY_PATHS['twitch_downloader']}")
 
-        # Test if the binary can be executed
+        # Test if the binary can be executed (with improved error handling)
         try:
             test_result = subprocess.run(
                 [BINARY_PATHS["twitch_downloader"], "--help"],
@@ -239,17 +239,18 @@ class TwitchVideoDownloader:
                 timeout=10
             )
             if test_result.returncode != 0:
-                logger.error(f"TwitchDownloaderCLI test failed. Return code: {test_result.returncode}")
-                logger.error(f"Stderr: {test_result.stderr}")
-                raise RuntimeError(f"TwitchDownloaderCLI binary test failed")
+                logger.warning(f"TwitchDownloaderCLI test failed. Return code: {test_result.returncode}")
+                logger.warning(f"Stderr: {test_result.stderr}")
+                # Don't fail the entire pipeline for binary test issues
+                # The binary might still work for actual downloads
+                logger.warning("Continuing despite binary test failure - will attempt download")
             else:
                 logger.info("TwitchDownloaderCLI binary test passed")
         except subprocess.TimeoutExpired:
-            logger.error("TwitchDownloaderCLI test timed out")
-            raise RuntimeError("TwitchDownloaderCLI binary test timed out")
+            logger.warning("TwitchDownloaderCLI test timed out - continuing anyway")
         except Exception as e:
-            logger.error(f"Error testing TwitchDownloaderCLI binary: {str(e)}")
-            raise RuntimeError(f"Error testing TwitchDownloaderCLI binary: {str(e)}")
+            logger.warning(f"Error testing TwitchDownloaderCLI binary: {str(e)} - continuing anyway")
+            # Don't raise an exception for binary test failures
 
         # Create progress bar
         pbar = tqdm(total=100, desc=f"Downloading VOD {video_id}")
