@@ -279,8 +279,9 @@ class TwitchVideoDownloader:
             logger.error(f"Failed to start video download process: {str(e)}")
             raise RuntimeError(f"Failed to start video download process: {str(e)}")
 
-        # Set a timeout for the entire download process (30 minutes)
-        download_timeout = 30 * 60  # 30 minutes in seconds
+        # Set a timeout for the entire download process (50 minutes)
+        # This allows for large VODs (4+ hours) which can be 2-4GB at 720p
+        download_timeout = 50 * 60  # 50 minutes in seconds
         start_time = time.time()
 
         # Process output to update progress bar
@@ -299,9 +300,10 @@ class TwitchVideoDownloader:
 
             try:
                 # Use asyncio.wait_for to add a timeout to readline
-                line = await asyncio.wait_for(process.stdout.readline(), timeout=30)
+                # Increased timeout for slow network conditions or large file processing
+                line = await asyncio.wait_for(process.stdout.readline(), timeout=60)
             except asyncio.TimeoutError:
-                logger.warning("No output from video download process for 30 seconds, checking if process is still alive")
+                logger.warning("No output from video download process for 60 seconds, checking if process is still alive")
                 if process.returncode is not None:
                     logger.info("Process has completed")
                     break
@@ -477,8 +479,9 @@ class TwitchVideoDownloader:
             stderr=asyncio.subprocess.PIPE
         )
 
-        # Set timeout for audio extraction (15 minutes)
-        audio_timeout = 15 * 60  # 15 minutes in seconds
+        # Set timeout for audio extraction (25 minutes)
+        # Audio extraction is usually faster than download, but large files need more time
+        audio_timeout = 25 * 60  # 25 minutes in seconds
         start_time = time.time()
 
         # Process output to update progress bar
@@ -496,9 +499,9 @@ class TwitchVideoDownloader:
                 raise RuntimeError(f"Audio extraction timed out after {audio_timeout} seconds")
 
             try:
-                line = await asyncio.wait_for(process.stderr.readline(), timeout=30)
+                line = await asyncio.wait_for(process.stderr.readline(), timeout=60)
             except asyncio.TimeoutError:
-                logger.warning("No output from audio extraction process for 30 seconds, checking if process is still alive")
+                logger.warning("No output from audio extraction process for 60 seconds, checking if process is still alive")
                 if process.returncode is not None:
                     logger.info("Audio extraction process has completed")
                     break
