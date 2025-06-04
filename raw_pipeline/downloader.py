@@ -238,14 +238,22 @@ class TwitchVideoDownloader:
                 text=True,
                 timeout=10
             )
-            if test_result.returncode != 0:
-                logger.warning(f"TwitchDownloaderCLI test failed. Return code: {test_result.returncode}")
-                logger.warning(f"Stderr: {test_result.stderr}")
-                # Don't fail the entire pipeline for binary test issues
-                # The binary might still work for actual downloads
-                logger.warning("Continuing despite binary test failure - will attempt download")
+
+            # Log detailed output for debugging
+            logger.info(f"TwitchDownloaderCLI test - Return code: {test_result.returncode}")
+            logger.info(f"TwitchDownloaderCLI test - Stdout: {test_result.stdout[:200]}...")
+            logger.info(f"TwitchDownloaderCLI test - Stderr: {test_result.stderr[:200]}...")
+
+            # TwitchDownloaderCLI --help returns exit code 1 even when working correctly
+            # Check if the output contains expected help text instead of just return code
+            if test_result.stdout and ("TwitchDownloaderCLI" in test_result.stdout or "Usage:" in test_result.stdout):
+                logger.info("TwitchDownloaderCLI binary test passed (help text found)")
+            elif test_result.returncode == 1 and "TwitchDownloaderCLI" in test_result.stderr:
+                logger.info("TwitchDownloaderCLI binary test passed (binary responds correctly)")
             else:
-                logger.info("TwitchDownloaderCLI binary test passed")
+                logger.warning(f"TwitchDownloaderCLI test unexpected result. Return code: {test_result.returncode}")
+                logger.warning("Continuing anyway - will test during actual download")
+
         except subprocess.TimeoutExpired:
             logger.warning("TwitchDownloaderCLI test timed out - continuing anyway")
         except Exception as e:
