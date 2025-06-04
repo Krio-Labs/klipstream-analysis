@@ -114,8 +114,8 @@ class TranscriptionHandler:
                 smart_format=True,
                 punctuate=True,
                 paragraphs=True,
-                filler_words=True,
-                keywords=["Chat", "Thank you for the Tier 1"]
+                filler_words=True
+                # Note: keywords/keyterm not supported with nova-3 model
             )
 
             # Open the audio file and transcribe with retry logic
