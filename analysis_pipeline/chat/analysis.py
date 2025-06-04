@@ -17,7 +17,14 @@ import seaborn as sns
 
 from utils.logging_setup import setup_logger
 from utils.convex_client_updated import ConvexManager
-from convex_integration import STATUS_QUEUED, STATUS_DOWNLOADING, STATUS_TRANSCRIBING, STATUS_ANALYZING, STATUS_FINDING_HIGHLIGHTS, STATUS_COMPLETED, STATUS_FAILED
+# Video processing status constants
+STATUS_QUEUED = "Queued"
+STATUS_DOWNLOADING = "Downloading"
+STATUS_TRANSCRIBING = "Transcribing"
+STATUS_ANALYZING = "Analyzing"
+STATUS_FINDING_HIGHLIGHTS = "Finding highlights"
+STATUS_COMPLETED = "Completed"
+STATUS_FAILED = "Failed"
 
 # Set up logger
 logger = setup_logger("chat_analysis", "chat_analysis.log")
