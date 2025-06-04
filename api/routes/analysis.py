@@ -201,6 +201,44 @@ async def start_analysis(
         )
 
 
+@router.post(
+    "/analyze",
+    response_model=AnalysisResponse,
+    summary="Start Video Analysis (Legacy Endpoint)",
+    description="Legacy endpoint that redirects to /analysis. Maintained for backward compatibility.",
+    responses={
+        200: {
+            "description": "Analysis started successfully",
+            "content": {
+                "application/json": {
+                    "example": ANALYSIS_START_RESPONSE_EXAMPLE
+                }
+            }
+        },
+        400: {
+            "description": "Invalid request or URL format",
+            "content": {
+                "application/json": {
+                    "example": ANALYSIS_ERROR_RESPONSE_EXAMPLE
+                }
+            }
+        }
+    }
+)
+async def start_analysis_legacy(
+    request: AnalysisRequest,
+    background_tasks: BackgroundTasks
+) -> AnalysisResponse:
+    """
+    Legacy endpoint for starting video analysis
+
+    This endpoint provides backward compatibility for clients using the old /analyze endpoint.
+    It redirects to the new /analysis endpoint with the same functionality.
+    """
+    logger.info(f"Legacy /analyze endpoint called, redirecting to /analysis")
+    return await start_analysis(request, background_tasks)
+
+
 @router.get(
     "/analysis/{job_id}",
     response_model=AnalysisResponse,

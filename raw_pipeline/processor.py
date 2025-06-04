@@ -33,6 +33,7 @@ STATUS_FAILED = "Failed"
 from utils.helpers import extract_video_id
 
 from .downloader import TwitchVideoDownloader
+from .enhanced_downloader import EnhancedTwitchDownloader
 from .transcriber import TranscriptionHandler
 from .waveform import generate_waveform
 from .chat import download_chat_data
@@ -84,21 +85,56 @@ async def process_raw_files(url):
         logger.info(f"Updating Convex status to '{STATUS_FETCHING_CHAT}' for video ID: {video_id}")
         convex_manager.update_video_status(video_id, STATUS_FETCHING_CHAT)
 
-        # Use ThreadPoolExecutor for parallel downloads
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            # Start video download (async)
-            downloader = TwitchVideoDownloader()
-            download_future = asyncio.create_task(downloader.process_video(url))
+        # Use enhanced downloader with monitoring
+        try:
+            # Initialize enhanced downloader
+            enhanced_downloader = EnhancedTwitchDownloader()
 
-            # Start chat download (sync) in a separate thread
+            # Start video download with monitoring
+            logger.info(f"Starting enhanced video download for video ID: {video_id}")
+            download_result = await enhanced_downloader.download_video_with_monitoring(
+                video_id=video_id,
+                job_id=f"raw_pipeline_{video_id}"
+            )
+
+            # Extract audio using the standard downloader's audio extraction method
+            standard_downloader = TwitchVideoDownloader()
+            audio_file = await standard_downloader.extract_audio(download_result, video_id)
+
+            # Convert to expected format for compatibility
+            download_result = {
+                "video_id": video_id,
+                "video_file": download_result,
+                "audio_file": audio_file,
+                "twitch_info": {}
+            }
+
+            # Start chat download in parallel
             logger.info(f"Downloading chat data for video ID: {video_id}")
-            chat_future = executor.submit(download_chat_data, video_id)
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                chat_future = executor.submit(download_chat_data, video_id)
+                chat_result = chat_future.result()
 
-            # Wait for both tasks to complete
-            download_result = await download_future
-            chat_result = chat_future.result()
+            logger.info(f"Enhanced video download and chat download completed for video ID: {video_id}")
 
-            logger.info(f"Video download and chat download completed for video ID: {video_id}")
+        except Exception as e:
+            logger.error(f"Enhanced download failed, falling back to standard downloader: {e}")
+
+            # Fallback to standard downloader
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                # Start video download (async)
+                downloader = TwitchVideoDownloader()
+                download_future = asyncio.create_task(downloader.process_video(url))
+
+                # Start chat download (sync) in a separate thread
+                logger.info(f"Downloading chat data for video ID: {video_id}")
+                chat_future = executor.submit(download_chat_data, video_id)
+
+                # Wait for both tasks to complete
+                download_result = await download_future
+                chat_result = chat_future.result()
+
+                logger.info(f"Fallback video download and chat download completed for video ID: {video_id}")
 
         # Create a dictionary to store all file paths
         files = {
