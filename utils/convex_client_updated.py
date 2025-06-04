@@ -28,16 +28,8 @@ STATUS_FINDING_HIGHLIGHTS = "Finding highlights"
 STATUS_COMPLETED = "Completed"
 STATUS_FAILED = "Failed"
 
-# Import ConvexIntegration class (placeholder for now)
-class ConvexIntegration:
-    def __init__(self, url, api_key):
-        self.url = url
-        self.api_key = api_key
-        logger.info(f"ConvexIntegration initialized with URL: {url}")
-
-    def update_video_status(self, video_id, status):
-        logger.info(f"Would update video {video_id} status to {status}")
-        return True
+# Import the real ConvexIntegration class
+from convex_integration import ConvexIntegration
 
 # Set up logger
 logger = setup_logger("convex_client", "convex_client.log")
