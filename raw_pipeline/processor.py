@@ -90,9 +90,9 @@ async def process_raw_files(url):
             # Initialize enhanced downloader
             enhanced_downloader = EnhancedTwitchDownloader()
 
-            # Start video download with monitoring
-            logger.info(f"Starting enhanced video download for video ID: {video_id}")
-            download_result = await enhanced_downloader.download_video_with_monitoring(
+            # Start video download with progressive quality fallback
+            logger.info(f"Starting enhanced video download with progressive fallback for video ID: {video_id}")
+            download_result = await enhanced_downloader.download_video_with_progressive_fallback(
                 video_id=video_id,
                 job_id=f"raw_pipeline_{video_id}"
             )

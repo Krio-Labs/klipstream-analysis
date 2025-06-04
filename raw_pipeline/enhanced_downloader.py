@@ -305,20 +305,25 @@ class ErrorAnalyzer:
             }
         
         # Check for memory issues
-        if any(keyword in stderr.lower() for keyword in ['memory', 'out of memory', 'oom']):
+        if any(keyword in stderr.lower() for keyword in ['memory', 'out of memory', 'oom', 'heap', 'allocation']):
+            peak_memory = max([m.memory_mb for m in context.metrics_history]) if context.metrics_history else 0
+
             return FailureType.MEMORY_EXHAUSTION, {
-                'user_message': 'The download process ran out of memory. This may be due to a very large video file.',
+                'user_message': f'The download process ran out of memory (peak: {peak_memory:.1f}MB). Try a lower quality setting.',
                 'technical_details': {
                     'max_memory_mb': context.max_memory_mb,
-                    'peak_memory_usage': max([m.memory_mb for m in context.metrics_history]) if context.metrics_history else 0
+                    'peak_memory_usage': peak_memory,
+                    'memory_utilization': (peak_memory / context.max_memory_mb * 100) if context.max_memory_mb > 0 else 0,
+                    'suggested_quality': 'Try 480p or 360p quality'
                 },
                 'suggested_actions': [
-                    'Retry with more memory allocated',
-                    'Try downloading at a lower quality',
-                    'Contact support for large file handling'
+                    'Retry with lower quality (480p or 360p)',
+                    'Use progressive quality fallback',
+                    'Increase memory allocation if possible',
+                    'Try downloading during off-peak hours'
                 ],
                 'is_retryable': True,
-                'retry_delay': 120
+                'retry_delay': 60
             }
         
         # Check for network issues
@@ -396,29 +401,105 @@ class EnhancedTwitchDownloader:
         self.active_contexts = {}
         self.error_analyzer = ErrorAnalyzer()
 
-    async def download_video_with_monitoring(self, video_id: str, job_id: str = None) -> Path:
-        """Download video with comprehensive monitoring and error handling"""
+        # Quality fallback configuration
+        self.quality_levels = [
+            {"quality": "720p", "max_memory_mb": 8192, "timeout_multiplier": 1.0},
+            {"quality": "480p", "max_memory_mb": 4096, "timeout_multiplier": 0.8},
+            {"quality": "360p", "max_memory_mb": 2048, "timeout_multiplier": 0.6},
+            {"quality": "worst", "max_memory_mb": 1024, "timeout_multiplier": 0.5}
+        ]
+
+    async def download_video_with_progressive_fallback(self, video_id: str, job_id: str = None) -> Path:
+        """Download video with progressive quality fallback on memory/timeout issues"""
 
         if job_id is None:
             job_id = str(uuid.uuid4())
 
-        # Create execution context
+        logger.info(f"Starting progressive quality fallback download for {video_id} (job: {job_id})")
+
+        # Try each quality level in order
+        for attempt, quality_config in enumerate(self.quality_levels):
+            quality = quality_config["quality"]
+            max_memory = quality_config["max_memory_mb"]
+            timeout_multiplier = quality_config["timeout_multiplier"]
+
+            logger.info(f"Attempt {attempt + 1}/{len(self.quality_levels)}: Trying quality {quality} (max memory: {max_memory}MB)")
+
+            try:
+                result = await self._download_with_quality(
+                    video_id=video_id,
+                    job_id=f"{job_id}_q{attempt}",
+                    quality=quality,
+                    max_memory_mb=max_memory,
+                    timeout_multiplier=timeout_multiplier
+                )
+
+                logger.info(f"✅ Successfully downloaded {video_id} at {quality} quality")
+                return result
+
+            except Exception as e:
+                error_msg = str(e).lower()
+
+                # Check if this is a memory or timeout related error
+                is_memory_error = any(keyword in error_msg for keyword in ['memory', 'oom', 'out of memory'])
+                is_timeout_error = any(keyword in error_msg for keyword in ['timeout', 'timed out'])
+                is_size_error = any(keyword in error_msg for keyword in ['too large', 'file size', 'disk space'])
+
+                if is_memory_error or is_timeout_error or is_size_error:
+                    logger.warning(f"❌ Quality {quality} failed with recoverable error: {e}")
+
+                    if attempt < len(self.quality_levels) - 1:
+                        next_quality = self.quality_levels[attempt + 1]["quality"]
+                        logger.info(f"🔄 Falling back to {next_quality} quality...")
+                        continue
+                    else:
+                        logger.error(f"💥 All quality levels failed. Last error: {e}")
+                        raise RuntimeError(f"Progressive fallback failed - all quality levels exhausted. Final error: {e}")
+                else:
+                    # Non-recoverable error, don't try other qualities
+                    logger.error(f"💥 Non-recoverable error at {quality} quality: {e}")
+                    raise e
+
+        # Should never reach here
+        raise RuntimeError("Progressive fallback failed - no quality levels available")
+
+    async def download_video_with_monitoring(self, video_id: str, job_id: str = None) -> Path:
+        """Download video with comprehensive monitoring and error handling"""
+
+        # Use progressive fallback by default
+        return await self.download_video_with_progressive_fallback(video_id, job_id)
+
+    async def _download_with_quality(self, video_id: str, job_id: str, quality: str,
+                                   max_memory_mb: int, timeout_multiplier: float) -> Path:
+        """Download video with specific quality and resource constraints"""
+
+        # Create execution context with quality-specific settings
+        base_timeout = 30 * 60  # 30 minutes base
+        adjusted_timeout = int(base_timeout * timeout_multiplier)
+
         context = ProcessContext(
             job_id=job_id,
             video_id=video_id,
             start_time=datetime.now(timezone.utc),
-            timeout_seconds=30 * 60,  # 30 minutes timeout
-            max_memory_mb=8192  # 8GB memory limit
+            timeout_seconds=adjusted_timeout,
+            max_memory_mb=max_memory_mb
         )
 
-        # Create adaptive timeout manager
+        # Create adaptive timeout manager with quality-specific settings
         timeout_config = TimeoutConfig(
-            base_timeout_seconds=30 * 60,  # 30 minutes
-            max_timeout_seconds=60 * 60,   # 1 hour maximum
-            progress_stall_timeout=5 * 60, # 5 minutes without progress
+            base_timeout_seconds=adjusted_timeout,
+            max_timeout_seconds=int(adjusted_timeout * 1.5),  # 50% buffer
+            progress_stall_timeout=min(5 * 60, adjusted_timeout // 6),  # 5 min or 1/6 of total
             adaptive_scaling=True
         )
         timeout_manager = AdaptiveTimeoutManager(timeout_config)
+
+        # Add memory monitoring callback
+        def memory_alert_callback(event):
+            if event.reason.value == "memory_exhaustion":
+                logger.warning(f"Memory exhaustion detected for quality {quality}: {event.message}")
+
+        timeout_manager.register_timeout_callback(memory_alert_callback)
 
         self.active_contexts[job_id] = context
 
@@ -434,14 +515,16 @@ class EnhancedTwitchDownloader:
                 context.state = ProcessState.COMPLETED
                 return video_file
 
-            # Prepare download command
+            # Prepare download command with quality-specific settings
+            threads = self._get_optimal_threads(quality, max_memory_mb)
+
             command = [
                 BINARY_PATHS["twitch_downloader"],
                 "videodownload",
                 "--id", video_id,
                 "-o", str(video_file),
-                "--quality", "720p",
-                "--threads", "8",  # Reduced threads for stability
+                "--quality", quality,
+                "--threads", str(threads),
                 "--temp-path", str(TEMP_DIR)
             ]
 
@@ -649,3 +732,48 @@ class EnhancedTwitchDownloader:
     def get_download_status(self, job_id: str) -> Optional[ProcessContext]:
         """Get status of a specific download"""
         return self.active_contexts.get(job_id)
+
+    def _get_optimal_threads(self, quality: str, max_memory_mb: int) -> int:
+        """Calculate optimal thread count based on quality and memory constraints"""
+
+        # Base thread counts by quality
+        quality_threads = {
+            "720p": 8,
+            "480p": 6,
+            "360p": 4,
+            "worst": 2
+        }
+
+        base_threads = quality_threads.get(quality, 4)
+
+        # Adjust based on memory constraints
+        if max_memory_mb <= 1024:  # 1GB
+            return min(base_threads, 2)
+        elif max_memory_mb <= 2048:  # 2GB
+            return min(base_threads, 4)
+        elif max_memory_mb <= 4096:  # 4GB
+            return min(base_threads, 6)
+        else:  # 8GB+
+            return base_threads
+
+    def get_quality_recommendation(self, available_memory_mb: int, video_duration_minutes: int = None) -> str:
+        """Get recommended quality based on available resources"""
+
+        # Factor in video duration if available
+        memory_factor = 1.0
+        if video_duration_minutes:
+            if video_duration_minutes > 240:  # 4+ hours
+                memory_factor = 1.5
+            elif video_duration_minutes > 120:  # 2+ hours
+                memory_factor = 1.3  # Increased factor for 3+ hour videos
+
+        adjusted_memory = available_memory_mb / memory_factor
+
+        if adjusted_memory >= 6144:  # 6GB+
+            return "720p"
+        elif adjusted_memory >= 3072:  # 3GB+
+            return "480p"
+        elif adjusted_memory >= 1536:  # 1.5GB+
+            return "360p"
+        else:
+            return "worst"
