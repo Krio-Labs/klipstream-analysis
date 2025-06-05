@@ -133,67 +133,99 @@ class ProcessMonitor:
         }
     
     async def start_monitoring(self, process: asyncio.subprocess.Process):
-        """Start monitoring the process"""
+        """Start Cloud Run compatible monitoring"""
         self.monitoring = True
         self.context.process_id = process.pid
-        
+
+        last_activity_time = time.time()
+        stuck_count = 0
+
         try:
-            psutil_process = psutil.Process(process.pid)
-            
+            # Try to get psutil process, but don't fail if it doesn't work
+            psutil_process = None
+            try:
+                psutil_process = psutil.Process(process.pid)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                logger.info("Limited process monitoring in Cloud Run environment")
+
             while self.monitoring and process.returncode is None:
                 try:
-                    # Collect metrics
-                    metrics = await self.collect_metrics(psutil_process)
-                    self.context.metrics_history.append(metrics)
-                    
-                    # Check for alerts
-                    await self.check_alert_conditions(metrics)
-                    
-                    # Predict potential failures
-                    await self.predict_failures(metrics)
-                    
-                    await asyncio.sleep(5)  # Monitor every 5 seconds
-                    
+                    current_time = time.time()
+
+                    # Collect metrics if possible
+                    if psutil_process:
+                        try:
+                            metrics = await self.collect_metrics(psutil_process)
+                            self.context.metrics_history.append(metrics)
+
+                            # Keep only recent metrics for Cloud Run
+                            if len(self.context.metrics_history) > 20:
+                                self.context.metrics_history.pop(0)
+
+                            # Check for alerts (less frequent)
+                            await self.check_alert_conditions(metrics)
+                        except Exception as e:
+                            logger.debug(f"Metrics collection failed: {e}")
+
+                    # Check for stuck process (Cloud Run specific)
+                    if current_time - last_activity_time > 60:  # 1 minute without activity
+                        stuck_count += 1
+                        logger.warning(f"No activity for {current_time - last_activity_time:.1f}s (count: {stuck_count})")
+
+                        if stuck_count >= 2:  # 2 minutes total
+                            logger.error("Process appears stuck in Cloud Run environment")
+                            self.monitoring = False
+                            break
+
+                    await asyncio.sleep(10)  # Monitor every 10 seconds (less frequent for Cloud Run)
+
                 except psutil.NoSuchProcess:
-                    logger.warning(f"Process {process.pid} no longer exists")
+                    logger.info(f"Process {process.pid} completed")
                     break
                 except Exception as e:
-                    logger.error(f"Error monitoring process: {e}")
-                    await asyncio.sleep(5)
-                    
+                    logger.debug(f"Monitoring error (Cloud Run): {e}")
+                    await asyncio.sleep(10)
+
         except Exception as e:
-            logger.error(f"Failed to start process monitoring: {e}")
+            logger.warning(f"Process monitoring limited in Cloud Run: {e}")
     
     async def collect_metrics(self, psutil_process) -> ProcessMetrics:
-        """Collect comprehensive process metrics"""
+        """Collect Cloud Run compatible process metrics"""
         try:
-            # Get process info
-            memory_info = psutil_process.memory_info()
-            cpu_percent = psutil_process.cpu_percent()
-            
-            # Get I/O stats if available
+            # Get basic process info (these work in Cloud Run)
             try:
-                io_counters = psutil_process.io_counters()
-                disk_read = io_counters.read_bytes
-                disk_write = io_counters.write_bytes
-            except (psutil.AccessDenied, AttributeError):
-                disk_read = disk_write = 0
-            
-            # Get system memory info
-            system_memory = psutil.virtual_memory()
-            memory_percent = (memory_info.rss / system_memory.total) * 100
-            
+                memory_info = psutil_process.memory_info()
+                memory_mb = memory_info.rss / (1024 * 1024)
+            except (psutil.AccessDenied, psutil.NoSuchProcess):
+                memory_mb = 0.0
+
+            try:
+                cpu_percent = psutil_process.cpu_percent()
+            except (psutil.AccessDenied, psutil.NoSuchProcess):
+                cpu_percent = 0.0
+
+            # Skip I/O stats in Cloud Run (not available)
+            disk_read = disk_write = 0
+
+            # Use basic memory percentage calculation
+            try:
+                system_memory = psutil.virtual_memory()
+                memory_percent = (memory_mb * 1024 * 1024 / system_memory.total) * 100
+            except:
+                memory_percent = 0.0
+
             return ProcessMetrics(
                 timestamp=datetime.now(timezone.utc),
                 cpu_percent=cpu_percent,
-                memory_mb=memory_info.rss / (1024 * 1024),
+                memory_mb=memory_mb,
                 memory_percent=memory_percent,
                 disk_io_read=disk_read,
                 disk_io_write=disk_write
             )
-            
+
         except Exception as e:
-            logger.error(f"Error collecting metrics: {e}")
+            # Reduce log noise in Cloud Run
+            logger.debug(f"Metrics collection limited in Cloud Run environment: {e}")
             return ProcessMetrics(
                 timestamp=datetime.now(timezone.utc),
                 cpu_percent=0.0,
@@ -571,7 +603,19 @@ class EnhancedTwitchDownloader:
         # Start the process with timeout management
         try:
             timeout_process = TimeoutAwareProcess(timeout_manager)
-            process = await timeout_process.start_process(command)
+
+            # Check if we're running in FastAPI context and set up environment properly
+            try:
+                from api.services.subprocess_wrapper import subprocess_wrapper
+                # Use the subprocess wrapper's environment and working directory
+                env = subprocess_wrapper.base_env.copy()
+                cwd = subprocess_wrapper.working_directory
+
+                logger.info("Using FastAPI subprocess wrapper environment for enhanced download")
+                process = await timeout_process.start_process(command, env=env, cwd=cwd)
+            except ImportError:
+                logger.info("Using default environment for enhanced download")
+                process = await timeout_process.start_process(command)
         except Exception as e:
             raise RuntimeError(f"Failed to start download process: {e}")
 
@@ -587,13 +631,13 @@ class EnhancedTwitchDownloader:
             # Process output with timeout
             while True:
                 try:
-                    # Read with timeout
-                    line = await asyncio.wait_for(process.stdout.readline(), timeout=30)
+                    # Read with shorter timeout for Cloud Run
+                    line = await asyncio.wait_for(process.stdout.readline(), timeout=15)
 
                     if not line:
                         # Check for stderr
                         try:
-                            err_line = await asyncio.wait_for(process.stderr.readline(), timeout=5)
+                            err_line = await asyncio.wait_for(process.stderr.readline(), timeout=3)
                             if err_line:
                                 err_str = err_line.decode('utf-8', errors='replace').strip()
                                 stderr_capture += err_str + "\n"
@@ -605,26 +649,32 @@ class EnhancedTwitchDownloader:
                     line_str = line.decode('utf-8', errors='replace').strip()
                     stdout_capture += line_str + "\n"
 
-                    # Update progress
+                    # Update progress and reset activity timer
                     await self._update_progress(context, line_str, timeout_manager)
 
-                    # Log important output
-                    if any(keyword in line_str.lower() for keyword in ['error', 'warning', 'failed', 'status']):
-                        logger.info(f"Process output: {line_str}")
+                    # Log all output for debugging stuck downloads
+                    logger.info(f"Process output: {line_str}")
 
                 except asyncio.TimeoutError:
                     # Check if process is still alive
                     if process.returncode is not None:
                         break
 
-                    # Check for timeout using timeout manager
+                    # More aggressive timeout checking for Cloud Run
                     timeout_event = timeout_manager.check_timeouts(context.progress)
                     if timeout_event:
                         logger.error(f"Download timeout: {timeout_event.message}")
                         await timeout_process.cleanup()
                         raise RuntimeError(f"Download timeout: {timeout_event.message}")
 
-                    logger.warning("No output for 30 seconds, checking process health...")
+                    # Check if we're stuck in video info phase
+                    execution_time = (datetime.now(timezone.utc) - context.start_time).total_seconds()
+                    if execution_time > 120 and (not context.progress or context.progress.percentage < 5):
+                        logger.error(f"Process stuck for {execution_time:.1f}s with minimal progress")
+                        await timeout_process.cleanup()
+                        raise RuntimeError("Download process appears stuck during initialization")
+
+                    logger.warning(f"No output for 15 seconds, execution time: {execution_time:.1f}s")
                     continue
 
             # Wait for process completion
@@ -668,9 +718,52 @@ class EnhancedTwitchDownloader:
             await timeout_process.cleanup()
 
     async def _update_progress(self, context: ProcessContext, line: str, timeout_manager: AdaptiveTimeoutManager):
-        """Update download progress from process output"""
+        """Update download progress from TwitchDownloaderCLI output"""
 
-        # Look for various progress patterns
+        # Track different stages of TwitchDownloaderCLI
+        stage_patterns = [
+            (r'\[STATUS\]\s*-\s*Fetching Video Info \[(\d+)/(\d+)\]', 'Fetching Video Info'),
+            (r'\[STATUS\]\s*-\s*Downloading Video \[(\d+)/(\d+)\]', 'Downloading Video'),
+            (r'\[STATUS\]\s*-\s*Verifying Video \[(\d+)/(\d+)\]', 'Verifying Video'),
+            (r'\[STATUS\]\s*-\s*Finalizing Video \[(\d+)/(\d+)\]', 'Finalizing Video'),
+        ]
+
+        for pattern, stage_name in stage_patterns:
+            match = re.search(pattern, line)
+            if match:
+                current, total = map(int, match.groups())
+                # Calculate stage progress (each stage is 25% of total)
+                stage_progress = (current / total) * 25
+
+                # Determine base progress based on stage
+                stage_bases = {
+                    'Fetching Video Info': 0,
+                    'Downloading Video': 25,
+                    'Verifying Video': 75,
+                    'Finalizing Video': 90
+                }
+
+                base_progress = stage_bases.get(stage_name, 0)
+                total_progress = base_progress + stage_progress
+
+                context.progress.percentage = min(100, total_progress)
+                context.progress.current_stage = f"{stage_name} [{current}/{total}]"
+                context.progress.last_update = datetime.now(timezone.utc)
+
+                logger.info(f"Stage: {stage_name} - Progress: {total_progress:.1f}% ({current}/{total})")
+
+                # Update timeout manager
+                timeout_progress = TimeoutProgressInfo(
+                    percentage=total_progress,
+                    bytes_downloaded=context.progress.bytes_downloaded,
+                    total_bytes=context.progress.total_bytes,
+                    last_update=context.progress.last_update,
+                    download_speed_mbps=context.progress.speed_mbps
+                )
+                timeout_manager.update_progress(timeout_progress)
+                return
+
+        # Look for traditional progress patterns
         progress_patterns = [
             r'Downloaded:\s+(\d+(?:\.\d+)?)%',
             r'Progress:\s+(\d+(?:\.\d+)?)%',
@@ -695,15 +788,10 @@ class EnhancedTwitchDownloader:
                 )
                 timeout_manager.update_progress(timeout_progress)
 
-                # Log progress every 10%
-                if progress % 10 == 0 or progress > 95:
-                    logger.info(f"Download progress: {progress}%")
-                    # Also log timeout status at major milestones
-                    timeout_status = timeout_manager.get_timeout_status()
-                    logger.info(f"Timeout status: {timeout_status['remaining_seconds']}s remaining, risk: {timeout_status['timeout_risk_level']}")
+                logger.info(f"Download progress: {progress}%")
                 return
 
-        # Look for segment information
+        # Look for segment information (fallback)
         segment_match = re.search(r'Downloading segment (\d+)/(\d+)', line)
         if segment_match:
             current, total = map(int, segment_match.groups())

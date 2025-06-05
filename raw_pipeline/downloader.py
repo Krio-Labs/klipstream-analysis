@@ -232,12 +232,25 @@ class TwitchVideoDownloader:
 
         # Test if the binary can be executed (with improved error handling)
         try:
-            test_result = subprocess.run(
-                [BINARY_PATHS["twitch_downloader"], "--help"],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
+            # Check if we're running in FastAPI context
+            try:
+                from api.services.subprocess_wrapper import subprocess_wrapper
+                test_result = subprocess_wrapper.run_subprocess_sync(
+                    [BINARY_PATHS["twitch_downloader"], "--help"],
+                    timeout=10,
+                    capture_output=True,
+                    check=False
+                )
+                logger.info("Using FastAPI subprocess wrapper for binary test")
+            except ImportError:
+                # Fallback to regular subprocess for standalone execution
+                test_result = subprocess.run(
+                    [BINARY_PATHS["twitch_downloader"], "--help"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                logger.info("Using regular subprocess for binary test")
 
             # Log detailed output for debugging
             logger.info(f"TwitchDownloaderCLI test - Return code: {test_result.returncode}")
@@ -270,11 +283,31 @@ class TwitchVideoDownloader:
         # Run the command with timeout
         logger.info(f"Running command: {' '.join(command)}")
         try:
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
+            # Check if we're running in FastAPI context and use appropriate subprocess method
+            try:
+                from api.services.subprocess_wrapper import subprocess_wrapper
+                # For FastAPI context, we need to use a different approach
+                # Since we need streaming output, we'll set up the environment properly
+                # and then use asyncio.create_subprocess_exec with the correct environment
+                env = subprocess_wrapper.base_env.copy()
+                cwd = subprocess_wrapper.working_directory
+
+                process = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=env,
+                    cwd=cwd
+                )
+                logger.info("Using FastAPI subprocess wrapper environment for video download")
+            except ImportError:
+                # Fallback to regular subprocess for standalone execution
+                process = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                logger.info("Using regular subprocess for video download")
         except Exception as e:
             logger.error(f"Failed to start video download process: {str(e)}")
             raise RuntimeError(f"Failed to start video download process: {str(e)}")

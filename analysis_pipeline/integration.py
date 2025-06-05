@@ -797,7 +797,28 @@ def create_emotion_summary(integrated_df, emotions, output_dir, video_id, smooth
 
     # Plot audio loudness
     ax_loudness = axes[n_emotions]
-    audio_file_path = f"Output/Raw/Audio/audio_{video_id}.wav"
+
+    # Try to get audio file path from file manager first, then fallback to hardcoded paths
+    try:
+        from utils.file_manager import FileManager
+        file_manager = FileManager()
+        audio_file_path = file_manager.get_local_path("audio")
+    except:
+        # Fallback to multiple possible paths
+        possible_audio_paths = [
+            f"/tmp/output/Raw/Audio/audio_{video_id}.wav",
+            f"/tmp/output/Raw/audio/audio_{video_id}.wav",
+            f"output/Raw/Audio/audio_{video_id}.wav",
+            f"Output/Raw/Audio/audio_{video_id}.wav"
+        ]
+        audio_file_path = None
+        for path in possible_audio_paths:
+            if os.path.exists(path):
+                audio_file_path = path
+                break
+        if audio_file_path is None:
+            audio_file_path = possible_audio_paths[0]  # Use first as default
+
     waveform_times, waveform_amplitudes = extract_audio_waveform(audio_file_path, num_points=2000)
 
     if len(waveform_times) > 0 and len(waveform_amplitudes) > 0:
@@ -1297,10 +1318,13 @@ def create_interactive_editor_view(integrated_df, top_highlights, output_dir, vi
 
         # Extract audio waveform - try multiple possible paths
         possible_audio_paths = [
-            f"Output/Raw/audio/audio_{video_id}.wav",  # lowercase 'audio'
-            f"Output/Raw/Audio/audio_{video_id}.wav",  # uppercase 'Audio'
-            f"Output/Raw/audio_{video_id}.wav",        # directly in Raw
-            f"Output/Raw/audio_{video_id}.mp3"         # mp3 format
+            f"/tmp/output/Raw/Audio/audio_{video_id}.wav",  # /tmp prefix with uppercase 'Audio'
+            f"/tmp/output/Raw/audio/audio_{video_id}.wav",  # /tmp prefix with lowercase 'audio'
+            f"output/Raw/Audio/audio_{video_id}.wav",       # relative path with uppercase 'Audio'
+            f"output/Raw/audio/audio_{video_id}.wav",       # relative path with lowercase 'audio'
+            f"Output/Raw/Audio/audio_{video_id}.wav",       # legacy uppercase 'Output'
+            f"Output/Raw/audio/audio_{video_id}.wav",       # legacy lowercase 'audio'
+            f"Output/Raw/audio_{video_id}.mp3"              # mp3 format
         ]
 
         audio_file_path = None

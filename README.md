@@ -321,6 +321,20 @@ For more details, see [Convex Integration Documentation](decision_docs/convex_in
 
 ## Testing
 
+The project includes a comprehensive test suite. See [TESTING.md](TESTING.md) for detailed documentation.
+
+### Quick Test Commands
+
+```bash
+# Test FastAPI subprocess fix (critical)
+python test_fastapi_subprocess_fix.py
+
+# Test deployed Cloud Run API
+python test_cloud_run_api.py
+```
+
+### Test Video
+
 For testing purposes, you can use the following Twitch VOD URL:
 ```
 https://www.twitch.tv/videos/2434635255

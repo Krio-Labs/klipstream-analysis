@@ -118,6 +118,10 @@ class EnhancedPipelineWrapper:
             
             # Create a wrapper function for retry
             async def pipeline_execution():
+                # Import and run the integrated pipeline directly to avoid thread pool issues
+                # with subprocess execution in FastAPI environment
+                from main import run_integrated_pipeline
+
                 # Check if run_integrated_pipeline is async or sync
                 result = run_integrated_pipeline(video_url)
                 if asyncio.iscoroutine(result):
@@ -133,33 +137,20 @@ class EnhancedPipelineWrapper:
                 pipeline_execution,
                 operation_name=f"pipeline_execution_{job_id}"
             )
-            
-            # Stage 3: Simulate progress updates during processing
-            # Note: In a future enhancement, we would modify the actual pipeline
-            # to call these progress updates at appropriate points
-            
-            await tracker.update_progress(ProcessingStage.DOWNLOADING, 25, "Video download in progress...")
-            await asyncio.sleep(1)  # Simulate processing time
-            
-            await tracker.update_progress(ProcessingStage.FETCHING_CHAT, 50, "Downloading chat data...")
-            await asyncio.sleep(1)
-            
-            await tracker.update_progress(ProcessingStage.TRANSCRIBING, 25, "Transcribing audio...")
-            await asyncio.sleep(1)
-            
-            await tracker.update_progress(ProcessingStage.TRANSCRIBING, 75, "Processing transcript...")
-            await asyncio.sleep(1)
-            
-            await tracker.update_progress(ProcessingStage.ANALYZING, 25, "Analyzing sentiment...")
-            await asyncio.sleep(1)
-            
-            await tracker.update_progress(ProcessingStage.ANALYZING, 75, "Processing analysis...")
-            await asyncio.sleep(1)
-            
-            await tracker.update_progress(ProcessingStage.FINDING_HIGHLIGHTS, 50, "Detecting highlights...")
-            await asyncio.sleep(1)
-            
-            await tracker.update_progress(ProcessingStage.COMPLETED, 100, "Analysis completed successfully!")
+
+            # Check if pipeline completed successfully
+            if result and result.get("status") == "completed":
+                # Pipeline already updated status to completed, just confirm final state
+                await tracker.update_progress(ProcessingStage.COMPLETED, 100, "Analysis completed successfully!")
+                logger.info(f"Pipeline completed successfully for job {job_id}")
+            else:
+                # Pipeline failed or returned unexpected result
+                error_message = result.get("error", "Unknown error") if result else "Pipeline returned no result"
+                logger.error(f"Pipeline failed for job {job_id}: {error_message}")
+                raise Exception(f"Pipeline execution failed: {error_message}")
+
+            # Note: The actual pipeline (main.py) handles its own progress updates
+            # We don't need to simulate progress here as it causes status conflicts
             
             logger.info(f"Pipeline completed successfully for job {job_id}")
             return result

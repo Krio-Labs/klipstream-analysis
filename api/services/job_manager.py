@@ -298,9 +298,10 @@ class JobManager:
             # Update Convex status
             convex_manager.update_video_status(job.video_id, "Queued")
             
-            # Create a progress callback for the pipeline
+            # Create a minimal progress callback for the pipeline
+            # Note: The main pipeline handles its own Convex updates, so we only update job status here
             async def pipeline_progress_callback(stage: str, percentage: float, message: str = None):
-                """Callback to update job progress from pipeline"""
+                """Minimal callback to update job progress from pipeline"""
                 # Map pipeline stages to our enum
                 stage_mapping = {
                     "downloading": ProcessingStage.DOWNLOADING,
@@ -312,28 +313,12 @@ class JobManager:
                 }
 
                 mapped_stage = stage_mapping.get(stage.lower(), ProcessingStage.ANALYZING)
+
+                # Only update job status, don't duplicate Convex updates
+                # The main pipeline handles Convex updates directly
                 await self.update_job_progress(job.id, mapped_stage, percentage, message)
 
-                # Update Convex status
-                convex_status_mapping = {
-                    ProcessingStage.DOWNLOADING: "Downloading",
-                    ProcessingStage.FETCHING_CHAT: "Fetching chat",
-                    ProcessingStage.TRANSCRIBING: "Transcribing",
-                    ProcessingStage.ANALYZING: "Analyzing",
-                    ProcessingStage.FINDING_HIGHLIGHTS: "Finding highlights",
-                    ProcessingStage.COMPLETED: "Completed"
-                }
-                convex_status = convex_status_mapping.get(mapped_stage, "Analyzing")
-                convex_manager.update_video_status(job.video_id, convex_status)
-
-                # Also update Convex with job progress data
-                progress_data = {
-                    "progressPercentage": percentage,
-                    "currentStage": convex_status,
-                    "estimatedCompletionSeconds": job.estimated_completion_seconds,
-                    "updatedAt": int(datetime.utcnow().timestamp() * 1000)  # Convex expects milliseconds
-                }
-                convex_manager.update_job_progress(job.video_id, job.id, progress_data)
+                logger.info(f"Job {job.id} progress: {mapped_stage.value} ({percentage:.1f}%) - {message or 'Processing...'}")
 
             # Run the integrated pipeline with enhanced progress tracking
             from .pipeline_wrapper import pipeline_wrapper

@@ -208,13 +208,24 @@ class TimeoutAwareProcess:
         self.process = None
         self.monitoring_task = None
         
-    async def start_process(self, command, **kwargs):
+    async def start_process(self, command, env=None, cwd=None, **kwargs):
         """Start process with timeout monitoring"""
+        # Prepare subprocess arguments
+        subprocess_kwargs = {
+            'stdout': asyncio.subprocess.PIPE,
+            'stderr': asyncio.subprocess.PIPE,
+            **kwargs
+        }
+
+        # Add environment and working directory if provided
+        if env is not None:
+            subprocess_kwargs['env'] = env
+        if cwd is not None:
+            subprocess_kwargs['cwd'] = cwd
+
         self.process = await asyncio.create_subprocess_exec(
             *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            **kwargs
+            **subprocess_kwargs
         )
         
         # Start timeout monitoring
