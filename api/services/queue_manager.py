@@ -74,7 +74,7 @@ class QueueManager:
     - Resource management and throttling
     """
     
-    def __init__(self, max_concurrent_jobs: int = 3, max_queue_size: int = 100):
+    def __init__(self, max_concurrent_jobs: int = 1, max_queue_size: int = 100):
         self.max_concurrent_jobs = max_concurrent_jobs
         self.max_queue_size = max_queue_size
         

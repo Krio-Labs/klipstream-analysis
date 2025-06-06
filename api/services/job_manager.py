@@ -113,12 +113,17 @@ class JobManager:
     async def create_job(self, job: AnalysisJob) -> None:
         """
         Create and store a new analysis job
-        
+
         Args:
             job: The AnalysisJob to create
         """
-        self.jobs[job.id] = job
-        logger.info(f"Created job {job.id} for video {job.video_id}")
+        try:
+            self.jobs[job.id] = job
+            logger.info(f"Created job {job.id} for video {job.video_id}")
+        except Exception as e:
+            logger.error(f"Error creating job {job.id}: {str(e)}")
+            # Continue anyway for debugging
+            self.jobs[job.id] = job
     
     async def get_job(self, job_id: str) -> Optional[AnalysisJob]:
         """

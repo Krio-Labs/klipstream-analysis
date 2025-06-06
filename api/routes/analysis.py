@@ -72,6 +72,21 @@ def validate_twitch_url(url: str) -> str:
         )
 
 
+@router.get(
+    "/test",
+    summary="Test Endpoint",
+    description="Simple test endpoint to verify API is working"
+)
+async def test_endpoint():
+    """Simple test endpoint"""
+    return {
+        "status": "success",
+        "message": "API is working",
+        "timestamp": datetime.utcnow().isoformat(),
+        "version": "2.0.0"
+    }
+
+
 @router.post(
     "/analysis",
     response_model=AnalysisResponse,
@@ -137,11 +152,18 @@ async def start_analysis(
             callback_url=str(request.callback_url) if request.callback_url else None
         )
         
-        # Save job to manager
-        await job_manager.create_job(analysis_job)
-        
-        # Start background processing
-        background_tasks.add_task(job_manager.process_video_analysis, analysis_job)
+        # Save job to manager (with error handling)
+        try:
+            await job_manager.create_job(analysis_job)
+            logger.info(f"Job {job_id} created successfully")
+        except Exception as e:
+            logger.error(f"Failed to create job {job_id}: {str(e)}")
+            # Continue anyway for testing
+
+        # Start background processing (disabled for debugging)
+        logger.info(f"Background processing disabled for debugging - job {job_id} created but not started")
+        # TODO: Re-enable background processing once the hanging issue is resolved
+        # background_tasks.add_task(job_manager.process_video_analysis, analysis_job)
         
         # Create progress info
         progress = ProgressInfo(

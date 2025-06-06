@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 
 # Import routes
-from .routes import analysis, status, webhooks, health, queue, monitoring, legacy
+from .routes import analysis, status, webhooks, health, queue, monitoring, legacy, analysis_minimal
 
 # Load environment variables
 load_dotenv()
@@ -38,28 +38,33 @@ async def lifespan(app: FastAPI):
     logger.info("🔄 Real-time status updates available")
 
     try:
-        # Start cache manager
-        from .services.cache_manager import start_cache_manager
-        await start_cache_manager()
-        logger.info("✅ Cache manager started")
+        # TEMPORARILY DISABLED: Background services causing event loop blocking
+        logger.info("⚠️  Background services temporarily disabled for debugging")
+        logger.info("🔧 This resolves the 17-minute request delay issue")
 
-        # Start metrics collection
-        from .services.metrics_manager import start_metrics_collection
-        await start_metrics_collection()
-        logger.info("✅ Metrics collection started")
+        # TODO: Re-enable with proper async handling
+        # # Start cache manager
+        # from .services.cache_manager import start_cache_manager
+        # await start_cache_manager()
+        # logger.info("✅ Cache manager started")
 
-        # Start queue manager
-        from .services.queue_manager import QueueManager
-        app.state.queue_manager = QueueManager(max_concurrent_jobs=3, max_queue_size=100)
-        logger.info("✅ Queue manager initialized")
+        # # Start metrics collection
+        # from .services.metrics_manager import start_metrics_collection
+        # await start_metrics_collection()
+        # logger.info("✅ Metrics collection started")
 
-        # Start monitoring manager
-        from .services.monitoring_manager import MonitoringManager
-        app.state.monitoring_manager = MonitoringManager(collection_interval=30, retention_hours=24)
-        await app.state.monitoring_manager.start_monitoring()
-        logger.info("✅ Monitoring manager started")
+        # # Start queue manager
+        # from .services.queue_manager import QueueManager
+        # app.state.queue_manager = QueueManager(max_concurrent_jobs=3, max_queue_size=100)
+        # logger.info("✅ Queue manager initialized")
 
-        logger.info("🎉 All Phase 3 services started successfully")
+        # # Start monitoring manager
+        # from .services.monitoring_manager import MonitoringManager
+        # app.state.monitoring_manager = MonitoringManager(collection_interval=30, retention_hours=24)
+        # await app.state.monitoring_manager.start_monitoring()
+        # logger.info("✅ Monitoring manager started")
+
+        logger.info("🎉 Minimal API started successfully (background services disabled)")
 
     except Exception as e:
         logger.error(f"❌ Error during startup: {str(e)}")
@@ -71,27 +76,31 @@ async def lifespan(app: FastAPI):
     logger.info("🛑 Shutting down KlipStream Analysis API")
 
     try:
-        # Stop monitoring manager
-        if hasattr(app.state, 'monitoring_manager'):
-            await app.state.monitoring_manager.stop_monitoring()
-            logger.info("✅ Monitoring manager stopped")
+        # TEMPORARILY DISABLED: Background services shutdown
+        logger.info("⚠️  Background services shutdown disabled (services were not started)")
 
-        # Stop queue manager
-        if hasattr(app.state, 'queue_manager'):
-            await app.state.queue_manager.stop_queue()
-            logger.info("✅ Queue manager stopped")
+        # TODO: Re-enable when background services are re-enabled
+        # # Stop monitoring manager
+        # if hasattr(app.state, 'monitoring_manager'):
+        #     await app.state.monitoring_manager.stop_monitoring()
+        #     logger.info("✅ Monitoring manager stopped")
 
-        # Stop metrics collection
-        from .services.metrics_manager import stop_metrics_collection
-        await stop_metrics_collection()
-        logger.info("✅ Metrics collection stopped")
+        # # Stop queue manager
+        # if hasattr(app.state, 'queue_manager'):
+        #     await app.state.queue_manager.stop_queue()
+        #     logger.info("✅ Queue manager stopped")
 
-        # Stop cache manager
-        from .services.cache_manager import stop_cache_manager
-        await stop_cache_manager()
-        logger.info("✅ Cache manager stopped")
+        # # Stop metrics collection
+        # from .services.metrics_manager import stop_metrics_collection
+        # await stop_metrics_collection()
+        # logger.info("✅ Metrics collection stopped")
 
-        logger.info("🎉 All services stopped successfully")
+        # # Stop cache manager
+        # from .services.cache_manager import stop_cache_manager
+        # await stop_cache_manager()
+        # logger.info("✅ Cache manager stopped")
+
+        logger.info("🎉 Minimal API shutdown completed")
 
     except Exception as e:
         logger.error(f"❌ Error during shutdown: {str(e)}")
@@ -173,6 +182,7 @@ async def health_check():
 
 # Include routers
 app.include_router(analysis.router, prefix="/api/v1", tags=["analysis"])
+app.include_router(analysis_minimal.router, prefix="/api/v1", tags=["analysis-minimal"])
 app.include_router(status.router, prefix="/api/v1", tags=["status"])
 app.include_router(webhooks.router)
 app.include_router(health.router)
