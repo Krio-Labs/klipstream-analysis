@@ -5,9 +5,6 @@ This module orchestrates the raw file processing for Twitch VODs.
 """
 
 import shutil
-import time
-import asyncio
-import concurrent.futures
 from pathlib import Path
 
 # Import sliding_window_generator from the same package
@@ -24,7 +21,7 @@ from utils.convex_client_updated import ConvexManager
 # Video processing status constants
 STATUS_QUEUED = "Queued"
 STATUS_DOWNLOADING = "Downloading"
-STATUS_PROCESSING = "Processing"
+STATUS_GENERATING_WAVEFORM = "Generating waveform"
 STATUS_TRANSCRIBING = "Transcribing"
 STATUS_FETCHING_CHAT = "Fetching chat"
 STATUS_ANALYZING = "Analyzing"
@@ -86,8 +83,8 @@ async def process_raw_files(url):
             "audio_file": download_result["audio_file"]
         }
 
-        # Update Convex status to "Processing" before waveform generation
-        convex_manager.update_video_status(video_id, STATUS_PROCESSING)
+        # Update Convex status to "Generating waveform" before waveform generation
+        convex_manager.update_video_status(video_id, STATUS_GENERATING_WAVEFORM)
         logger.info("🌊 Generating waveform...")
         waveform_result = generate_waveform(
             video_id,

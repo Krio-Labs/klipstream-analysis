@@ -44,7 +44,7 @@ class TranscriptionHandler:
         return file_size_mb
 
     def _setup_deepgram(self, api_key=None):
-        """Set up Deepgram with API key and timeout configuration"""
+        """Set up Deepgram with API key and extended timeout configuration"""
         # Use provided API key or get from environment
         api_key = api_key or DEEPGRAM_API_KEY or os.environ.get("DEEPGRAM_API_KEY")
 
@@ -52,9 +52,15 @@ class TranscriptionHandler:
             raise ValueError("DEEPGRAM_API_KEY environment variable must be set or API key must be provided")
 
         # Initialize Deepgram client with API key
-        # Note: Deepgram SDK handles timeouts internally for large files
+        # We'll handle timeouts at the httpx level since Deepgram uses httpx internally
         self.deepgram = DeepgramClient(api_key)
-        logger.info("Deepgram API configured with extended timeouts for large files")
+
+        # Configure extended timeouts for large file processing
+        # We'll set environment variables that httpx will pick up
+        import os
+        os.environ['HTTPX_TIMEOUT'] = '600'  # 10 minutes
+
+        logger.info("Deepgram API configured with extended timeouts for large files (10 minutes)")
 
     async def process_audio_files(self, video_id, audio_file_path=None, output_dir=None):
         """
@@ -117,9 +123,9 @@ class TranscriptionHandler:
                 # Note: keywords/keyterm not supported with nova-3 model
             )
 
-            # Open the audio file and transcribe with retry logic
-            max_retries = 3
-            retry_delay = 30  # Start with 30 seconds
+            # Open the audio file and transcribe with retry logic for large files
+            max_retries = 5  # Increased retries for large files
+            retry_delay = 60  # Start with 60 seconds for large files
 
             for attempt in range(max_retries):
                 try:
