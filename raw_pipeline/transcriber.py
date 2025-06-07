@@ -73,10 +73,13 @@ class TranscriptionHandler:
             if audio_file_path and os.path.exists(audio_file_path):
                 audio_file = audio_file_path
             else:
-                # Try different locations in order of preference
+                # Try different locations in order of preference (now looking for MP3 files first)
                 possible_audio_paths = [
-                    RAW_AUDIO_DIR / f"audio_{video_id}.wav",
+                    RAW_AUDIO_DIR / f"audio_{video_id}.mp3",
+                    RAW_AUDIO_DIR / f"audio_{video_id}.wav",  # Fallback to WAV
+                    Path(f"outputs/audio_{video_id}.mp3"),
                     Path(f"outputs/audio_{video_id}.wav"),
+                    Path(f"/tmp/outputs/audio_{video_id}.mp3"),
                     Path(f"/tmp/outputs/audio_{video_id}.wav")
                 ]
 
@@ -103,10 +106,6 @@ class TranscriptionHandler:
             # Check file size and warn if too large
             file_size_mb = self._check_file_size(audio_file)
 
-            # Transcribe audio
-            logger.info(f"Processing audio file: {audio_file}")
-            logger.info(f"Saving transcripts to: {output_dir}")
-
             # Configure transcription options
             options = PrerecordedOptions(
                 model="nova-3",
@@ -125,13 +124,9 @@ class TranscriptionHandler:
             for attempt in range(max_retries):
                 try:
                     with open(audio_file, 'rb') as audio:
-                        # Get transcript from Deepgram
-                        logger.info(f"Sending audio to Deepgram for transcription (attempt {attempt + 1}/{max_retries})...")
-
                         # Read the file content
                         audio_data = audio.read()
                         file_size_mb = len(audio_data) / (1024 * 1024)
-                        logger.info(f"Audio file size: {file_size_mb:.2f} MB")
 
                         # Create a FileSource object with the audio data
                         payload: FileSource = {
@@ -140,11 +135,7 @@ class TranscriptionHandler:
 
                         # Call the transcribe_file method with the payload and options
                         # Using the prerecorded endpoint with the correct API structure
-                        start_time = time.time()
                         response = self.deepgram.listen.prerecorded.v("1").transcribe_file(payload, options)
-                        transcription_time = time.time() - start_time
-
-                        logger.info(f"Transcription completed in {transcription_time:.2f} seconds")
 
                         if not response or not response.results:
                             raise Exception("Transcription failed: No results returned from Deepgram")

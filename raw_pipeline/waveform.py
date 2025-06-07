@@ -35,10 +35,13 @@ def process_audio_file(video_id, audio_file_path=None, samples_size=20000):
     if audio_file_path and os.path.exists(audio_file_path):
         file_path = Path(audio_file_path)
     else:
-        # Try different locations in order of preference
+        # Try different locations in order of preference (MP3 first, then WAV)
         possible_audio_paths = [
+            RAW_AUDIO_DIR / f"audio_{video_id}.mp3",
             RAW_AUDIO_DIR / f"audio_{video_id}.wav",
+            Path(f"outputs/audio_{video_id}.mp3"),
             Path(f"outputs/audio_{video_id}.wav"),
+            Path(f"/tmp/outputs/audio_{video_id}.mp3"),
             Path(f"/tmp/outputs/audio_{video_id}.wav")
         ]
         
@@ -53,8 +56,8 @@ def process_audio_file(video_id, audio_file_path=None, samples_size=20000):
     logger.info(f"Processing audio file: {file_path}")
     
     try:
-        # Load audio file using pydub
-        audio = AudioSegment.from_wav(str(file_path))
+        # Load audio file using pydub (auto-detect format)
+        audio = AudioSegment.from_file(str(file_path))
         
         # Convert to numpy array more efficiently
         samples = np.frombuffer(audio.raw_data, dtype=np.int16)

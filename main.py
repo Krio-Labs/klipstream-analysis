@@ -97,17 +97,12 @@ async def run_integrated_pipeline(url):
     try:
         # Extract video ID
         video_id = extract_video_id(url)
-        logger.info(f"Starting integrated pipeline for video ID: {video_id}")
+        logger.info(f"🎬 Starting pipeline for video: {video_id}")
 
         # Initialize file manager
         file_manager = FileManager(video_id)
 
-        # Log configuration
-        logger.info(f"Using base directory: {BASE_DIR}")
-        logger.info(f"Using GCS for file storage: {USE_GCS}")
-
         # Update Convex status to "Queued"
-        logger.info(f"Updating Convex status to '{STATUS_QUEUED}' for video ID: {video_id}")
         convex_manager.update_video_status(video_id, STATUS_QUEUED)
 
         # Create required directories
@@ -124,8 +119,7 @@ async def run_integrated_pipeline(url):
         create_directories()
 
         # STAGE 1: Raw Pipeline
-        logger.info("STAGE 1: Starting Raw Pipeline")
-        logger.info("This stage includes: video download, audio extraction, transcription, waveform generation, and chat download")
+        logger.info("📥 Stage 1: Downloading and processing raw files...")
         raw_start = time.time()
 
         try:
@@ -136,22 +130,19 @@ async def run_integrated_pipeline(url):
             raw_end = time.time()
             raw_duration = raw_end - raw_start
             stage_times["raw_pipeline"] = raw_duration
-            logger.info(f"Raw pipeline completed successfully in {raw_duration:.2f} seconds")
+            logger.info(f"✅ Stage 1 completed in {raw_duration:.1f}s")
 
             # Extract necessary information from raw pipeline result
             video_id = raw_result["video_id"]
             files = raw_result["files"]
             twitch_info = raw_result.get("twitch_info", {})
 
-            logger.info(f"Raw files processed for video ID: {video_id}")
-            logger.info(f"Generated files: {list(files.keys())}")
-
         except Exception as e:
-            logger.error(f"Raw pipeline failed: {str(e)}")
+            logger.error(f"❌ Stage 1 failed: {str(e)}")
             raise
 
         # STAGE 2: Analysis Pipeline
-        logger.info("STAGE 2: Starting Analysis Pipeline")
+        logger.info("🔍 Stage 2: Analyzing content...")
         analysis_start = time.time()
 
         try:
@@ -159,7 +150,7 @@ async def run_integrated_pipeline(url):
             if not analysis_result or analysis_result.get("status") != "completed":
                 # Check if this is a development environment
                 if os.environ.get('ENVIRONMENT', 'production') == 'development':
-                    logger.warning("Analysis pipeline had issues but continuing in development mode")
+                    logger.warning("⚠️  Analysis had issues but continuing in development mode")
                     analysis_result = {"status": "completed", "video_id": video_id}
                 else:
                     raise RuntimeError("Analysis pipeline failed to complete successfully")
@@ -167,13 +158,13 @@ async def run_integrated_pipeline(url):
             analysis_end = time.time()
             analysis_duration = analysis_end - analysis_start
             stage_times["analysis_pipeline"] = analysis_duration
-            logger.info(f"Analysis pipeline completed in {analysis_duration:.2f} seconds")
+            logger.info(f"✅ Stage 2 completed in {analysis_duration:.1f}s")
 
         except Exception as e:
-            logger.error(f"Analysis pipeline failed: {str(e)}")
+            logger.error(f"❌ Stage 2 failed: {str(e)}")
             # In development mode, continue with a warning
             if os.environ.get('ENVIRONMENT', 'production') == 'development':
-                logger.warning("Analysis pipeline failed but continuing in development mode")
+                logger.warning("⚠️  Analysis failed but continuing in development mode")
                 analysis_result = {"status": "completed", "video_id": video_id}
                 analysis_end = time.time()
                 analysis_duration = analysis_end - analysis_start
@@ -186,17 +177,13 @@ async def run_integrated_pipeline(url):
         total_duration = end_time - start_time
 
         # Generate summary report
-        logger.info("=" * 50)
-        logger.info("PIPELINE EXECUTION SUMMARY")
-        logger.info("=" * 50)
-        logger.info(f"Video ID: {video_id}")
-        logger.info(f"Raw Pipeline: {stage_times.get('raw_pipeline', 0):.2f} seconds")
-        logger.info(f"Analysis Pipeline: {stage_times.get('analysis_pipeline', 0):.2f} seconds")
-        logger.info(f"Total Execution Time: {total_duration:.2f} seconds")
-        logger.info("=" * 50)
+        logger.info(f"🎉 Pipeline completed successfully!")
+        logger.info(f"   Video ID: {video_id}")
+        logger.info(f"   Stage 1: {stage_times.get('raw_pipeline', 0):.1f}s")
+        logger.info(f"   Stage 2: {stage_times.get('analysis_pipeline', 0):.1f}s")
+        logger.info(f"   Total: {total_duration:.1f}s")
 
         # Update Convex status to "Completed"
-        logger.info(f"Updating Convex status to '{STATUS_COMPLETED}' for video ID: {video_id}")
         convex_manager.update_video_status(video_id, STATUS_COMPLETED)
 
         return {

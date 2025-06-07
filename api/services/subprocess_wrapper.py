@@ -52,8 +52,6 @@ class FastAPISubprocessWrapper:
             if str(binary_dir) not in current_path:
                 env['PATH'] = f"{binary_dir}:{current_path}"
         
-        logger.info(f"Prepared environment with DOTNET_BUNDLE_EXTRACT_BASE_DIR={env['DOTNET_BUNDLE_EXTRACT_BASE_DIR']}")
-        
         return env
     
     def _get_working_directory(self) -> Path:
@@ -62,7 +60,6 @@ class FastAPISubprocessWrapper:
         current_file = Path(__file__).resolve()
         project_root = current_file.parent.parent.parent
         
-        logger.info(f"Using working directory: {project_root}")
         return project_root
     
     async def run_subprocess_async(
@@ -91,10 +88,7 @@ class FastAPISubprocessWrapper:
         if additional_env:
             env.update(additional_env)
         
-        # Log command execution
-        logger.info(f"Executing command: {' '.join(command)}")
-        logger.info(f"Working directory: {self.working_directory}")
-        logger.info(f"DOTNET_BUNDLE_EXTRACT_BASE_DIR: {env.get('DOTNET_BUNDLE_EXTRACT_BASE_DIR')}")
+        # Command execution (logging disabled for cleaner output)
         
         # Run in executor to avoid blocking the event loop
         loop = asyncio.get_event_loop()
@@ -112,7 +106,6 @@ class FastAPISubprocessWrapper:
         
         try:
             result = await loop.run_in_executor(None, run_subprocess)
-            logger.info(f"Command completed with return code: {result.returncode}")
             return result
             
         except subprocess.CalledProcessError as e:
@@ -146,10 +139,7 @@ class FastAPISubprocessWrapper:
         if additional_env:
             env.update(additional_env)
         
-        # Log command execution
-        logger.info(f"Executing command (sync): {' '.join(command)}")
-        logger.info(f"Working directory: {self.working_directory}")
-        logger.info(f"DOTNET_BUNDLE_EXTRACT_BASE_DIR: {env.get('DOTNET_BUNDLE_EXTRACT_BASE_DIR')}")
+        # Command execution (logging disabled for cleaner output)
         
         try:
             result = subprocess.run(
@@ -161,7 +151,6 @@ class FastAPISubprocessWrapper:
                 check=check,
                 text=True
             )
-            logger.info(f"Command completed with return code: {result.returncode}")
             return result
             
         except subprocess.CalledProcessError as e:
@@ -187,8 +176,6 @@ class FastAPISubprocessWrapper:
             from utils.config import BINARY_PATHS
             
             cli_path = BINARY_PATHS["twitch_downloader"]
-            logger.info(f"Testing TwitchDownloaderCLI at: {cli_path}")
-            
             # Test with --help command
             result = self.run_subprocess_sync(
                 [cli_path, "--help"],
@@ -196,18 +183,11 @@ class FastAPISubprocessWrapper:
                 capture_output=True,
                 check=False  # Don't raise exception, just check return code
             )
-            
+
             # TwitchDownloaderCLI returns 1 for --help, which is normal
-            if result.returncode in [0, 1]:
-                logger.info("TwitchDownloaderCLI test successful")
-                return True
-            else:
-                logger.error(f"TwitchDownloaderCLI test failed with return code: {result.returncode}")
-                logger.error(f"Stderr: {result.stderr}")
-                return False
+            return result.returncode in [0, 1]
                 
-        except Exception as e:
-            logger.error(f"TwitchDownloaderCLI test failed with exception: {str(e)}")
+        except Exception:
             return False
 
 

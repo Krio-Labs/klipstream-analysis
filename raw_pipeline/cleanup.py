@@ -34,26 +34,16 @@ def cleanup_directories():
         DATA_DIR
     ]
 
-    logger.info("Starting cleanup process...")
-    
     # Remove directories
     for directory in directories_to_clean:
         if directory.exists():
             try:
-                logger.info(f"Removing directory: {directory}")
                 shutil.rmtree(directory)
-                logger.info(f"Successfully removed directory: {directory}")
             except Exception as e:
                 logger.error(f"Error removing directory {directory}: {str(e)}")
-        else:
-            logger.info(f"Directory does not exist, skipping: {directory}")
-    
-    # Recreate directory structure using the utility function
-    logger.info("Recreating directory structure...")
+
+    # Recreate directory structure
     create_directories()
-    logger.info("Directory structure recreated")
-    
-    logger.info("Cleanup completed")
     
     return True
 

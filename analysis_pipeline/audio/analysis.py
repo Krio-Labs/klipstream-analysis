@@ -126,16 +126,24 @@ def plot_metrics(output_dir, video_id):
                 y, sr = librosa.load(audio_path)
                 logger.info(f"Using audio file from file manager: {audio_path}")
             else:
-                # Try alternative paths
-                alt_audio_path = Path(f'output/Raw/Audio/audio_{video_id}.wav')
-                tmp_audio_path = Path(f'/tmp/output/Raw/Audio/audio_{video_id}.wav')
+                # Try alternative paths (MP3 first, then WAV)
+                alt_audio_path_mp3 = Path(f'output/Raw/Audio/audio_{video_id}.mp3')
+                alt_audio_path_wav = Path(f'output/Raw/Audio/audio_{video_id}.wav')
+                tmp_audio_path_mp3 = Path(f'/tmp/output/Raw/Audio/audio_{video_id}.mp3')
+                tmp_audio_path_wav = Path(f'/tmp/output/Raw/Audio/audio_{video_id}.wav')
 
-                if os.path.exists(alt_audio_path):
-                    y, sr = librosa.load(alt_audio_path)
-                    logger.info(f"Using audio file from alternative path: {alt_audio_path}")
-                elif os.path.exists(tmp_audio_path):
-                    y, sr = librosa.load(tmp_audio_path)
-                    logger.info(f"Using audio file from tmp path: {tmp_audio_path}")
+                if os.path.exists(alt_audio_path_mp3):
+                    y, sr = librosa.load(alt_audio_path_mp3)
+                    logger.info(f"Using audio file from alternative path: {alt_audio_path_mp3}")
+                elif os.path.exists(alt_audio_path_wav):
+                    y, sr = librosa.load(alt_audio_path_wav)
+                    logger.info(f"Using audio file from alternative path: {alt_audio_path_wav}")
+                elif os.path.exists(tmp_audio_path_mp3):
+                    y, sr = librosa.load(tmp_audio_path_mp3)
+                    logger.info(f"Using audio file from tmp path: {tmp_audio_path_mp3}")
+                elif os.path.exists(tmp_audio_path_wav):
+                    y, sr = librosa.load(tmp_audio_path_wav)
+                    logger.info(f"Using audio file from tmp path: {tmp_audio_path_wav}")
                 else:
                     # Try to download from GCS as a last resort
                     if USE_GCS and file_manager.download_from_gcs("audio"):
@@ -393,20 +401,32 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
                     y, sr = librosa.load(audio_path)
                     logger.info(f"Using audio file from file manager: {audio_path}")
                 else:
-                    # Try alternative paths
-                    alt_audio_path = Path(f'output/Raw/Audio/audio_{video_id}.wav')
-                    tmp_audio_path = Path(f'/tmp/output/Raw/Audio/audio_{video_id}.wav')
-                    tmp_outputs_path = Path(f'/tmp/outputs/audio_{video_id}.wav')
+                    # Try alternative paths (MP3 first, then WAV)
+                    alt_audio_path_mp3 = Path(f'output/Raw/Audio/audio_{video_id}.mp3')
+                    alt_audio_path_wav = Path(f'output/Raw/Audio/audio_{video_id}.wav')
+                    tmp_audio_path_mp3 = Path(f'/tmp/output/Raw/Audio/audio_{video_id}.mp3')
+                    tmp_audio_path_wav = Path(f'/tmp/output/Raw/Audio/audio_{video_id}.wav')
+                    tmp_outputs_path_mp3 = Path(f'/tmp/outputs/audio_{video_id}.mp3')
+                    tmp_outputs_path_wav = Path(f'/tmp/outputs/audio_{video_id}.wav')
 
-                    if os.path.exists(alt_audio_path):
-                        y, sr = librosa.load(alt_audio_path)
-                        logger.info(f"Using audio file from alternative path: {alt_audio_path}")
-                    elif os.path.exists(tmp_audio_path):
-                        y, sr = librosa.load(tmp_audio_path)
-                        logger.info(f"Using audio file from tmp path: {tmp_audio_path}")
-                    elif os.path.exists(tmp_outputs_path):
-                        y, sr = librosa.load(tmp_outputs_path)
-                        logger.info(f"Using audio file from tmp outputs path: {tmp_outputs_path}")
+                    if os.path.exists(alt_audio_path_mp3):
+                        y, sr = librosa.load(alt_audio_path_mp3)
+                        logger.info(f"Using audio file from alternative path: {alt_audio_path_mp3}")
+                    elif os.path.exists(alt_audio_path_wav):
+                        y, sr = librosa.load(alt_audio_path_wav)
+                        logger.info(f"Using audio file from alternative path: {alt_audio_path_wav}")
+                    elif os.path.exists(tmp_audio_path_mp3):
+                        y, sr = librosa.load(tmp_audio_path_mp3)
+                        logger.info(f"Using audio file from tmp path: {tmp_audio_path_mp3}")
+                    elif os.path.exists(tmp_audio_path_wav):
+                        y, sr = librosa.load(tmp_audio_path_wav)
+                        logger.info(f"Using audio file from tmp path: {tmp_audio_path_wav}")
+                    elif os.path.exists(tmp_outputs_path_mp3):
+                        y, sr = librosa.load(tmp_outputs_path_mp3)
+                        logger.info(f"Using audio file from tmp outputs path: {tmp_outputs_path_mp3}")
+                    elif os.path.exists(tmp_outputs_path_wav):
+                        y, sr = librosa.load(tmp_outputs_path_wav)
+                        logger.info(f"Using audio file from tmp outputs path: {tmp_outputs_path_wav}")
                     else:
                         # Try to download from GCS as a last resort
                         if USE_GCS and file_manager.download_from_gcs("audio"):

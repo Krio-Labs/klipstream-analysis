@@ -81,13 +81,8 @@ def download_chat(video_id, output_dir=None):
     # Ensure output directory exists
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info(f"Downloading chat for VOD {video_id} to {output_dir}")
-
     # Get the appropriate CLI command for the current OS
     cli_command = BINARY_PATHS["twitch_downloader"]
-
-    # Download chat in JSON format
-    logger.info(f"Downloading chat for VOD: {video_id}")
 
     # First, download chat in TEXT format to avoid image embedding completely
     # The TwitchDownloaderCLI automatically uses text format when the output file has .txt extension

@@ -1316,15 +1316,21 @@ def create_interactive_editor_view(integrated_df, top_highlights, output_dir, vi
         # Calculate threshold for "good" highlights (e.g., top 15% of scores)
         highlight_threshold = np.percentile(smoothed_scores, 85)
 
-        # Extract audio waveform - try multiple possible paths
+        # Extract audio waveform - try multiple possible paths (MP3 first for smaller files)
         possible_audio_paths = [
-            f"/tmp/output/Raw/Audio/audio_{video_id}.wav",  # /tmp prefix with uppercase 'Audio'
-            f"/tmp/output/Raw/audio/audio_{video_id}.wav",  # /tmp prefix with lowercase 'audio'
-            f"output/Raw/Audio/audio_{video_id}.wav",       # relative path with uppercase 'Audio'
-            f"output/Raw/audio/audio_{video_id}.wav",       # relative path with lowercase 'audio'
-            f"Output/Raw/Audio/audio_{video_id}.wav",       # legacy uppercase 'Output'
-            f"Output/Raw/audio/audio_{video_id}.wav",       # legacy lowercase 'audio'
-            f"Output/Raw/audio_{video_id}.mp3"              # mp3 format
+            f"/tmp/output/Raw/Audio/audio_{video_id}.mp3",  # /tmp prefix with uppercase 'Audio' - MP3
+            f"/tmp/output/Raw/Audio/audio_{video_id}.wav",  # /tmp prefix with uppercase 'Audio' - WAV
+            f"/tmp/output/Raw/audio/audio_{video_id}.mp3",  # /tmp prefix with lowercase 'audio' - MP3
+            f"/tmp/output/Raw/audio/audio_{video_id}.wav",  # /tmp prefix with lowercase 'audio' - WAV
+            f"output/Raw/Audio/audio_{video_id}.mp3",       # relative path with uppercase 'Audio' - MP3
+            f"output/Raw/Audio/audio_{video_id}.wav",       # relative path with uppercase 'Audio' - WAV
+            f"output/Raw/audio/audio_{video_id}.mp3",       # relative path with lowercase 'audio' - MP3
+            f"output/Raw/audio/audio_{video_id}.wav",       # relative path with lowercase 'audio' - WAV
+            f"Output/Raw/Audio/audio_{video_id}.mp3",       # legacy uppercase 'Output' - MP3
+            f"Output/Raw/Audio/audio_{video_id}.wav",       # legacy uppercase 'Output' - WAV
+            f"Output/Raw/audio/audio_{video_id}.mp3",       # legacy lowercase 'audio' - MP3
+            f"Output/Raw/audio/audio_{video_id}.wav",       # legacy lowercase 'audio' - WAV
+            f"Output/Raw/audio_{video_id}.mp3"              # mp3 format legacy
         ]
 
         audio_file_path = None
@@ -2467,17 +2473,21 @@ def create_loudness_visualization(video_id, output_dir):
         else:
             logger.warning(f"Could not find or download audio file. Trying fallback paths.")
 
-            # Fallback to multiple possible paths for backward compatibility
+            # Fallback to multiple possible paths for backward compatibility (MP3 first)
             possible_audio_paths = [
                 # Try paths with file manager first
                 file_manager.get_local_path("audio"),
-                # Then try various fallback paths for backward compatibility
+                # Then try various fallback paths for backward compatibility - MP3 first
+                f"/tmp/output/Raw/Audio/audio_{video_id}.mp3",
                 f"/tmp/output/Raw/Audio/audio_{video_id}.wav",
+                f"/tmp/output/Raw/audio/audio_{video_id}.mp3",
                 f"/tmp/output/Raw/audio/audio_{video_id}.wav",
-                f"output/Raw/Audio/audio_{video_id}.wav",  # uppercase 'Audio'
-                f"output/Raw/audio/audio_{video_id}.wav",  # lowercase 'audio'
-                f"output/Raw/audio_{video_id}.wav",        # directly in Raw
-                f"output/Raw/audio_{video_id}.mp3"         # mp3 format
+                f"output/Raw/Audio/audio_{video_id}.mp3",  # uppercase 'Audio' - MP3
+                f"output/Raw/Audio/audio_{video_id}.wav",  # uppercase 'Audio' - WAV
+                f"output/Raw/audio/audio_{video_id}.mp3",  # lowercase 'audio' - MP3
+                f"output/Raw/audio/audio_{video_id}.wav",  # lowercase 'audio' - WAV
+                f"output/Raw/audio_{video_id}.mp3",        # directly in Raw - MP3
+                f"output/Raw/audio_{video_id}.wav"         # directly in Raw - WAV
             ]
 
             for path in possible_audio_paths:

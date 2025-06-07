@@ -87,7 +87,7 @@ class FileManager:
         # Define path mapping
         path_mapping = {
             "video": self.base_dir / f"output/Raw/Videos/{self.video_id}.mp4",
-            "audio": self.base_dir / f"output/Raw/Audio/audio_{self.video_id}.wav",
+            "audio": self.base_dir / f"output/Raw/Audio/audio_{self.video_id}.mp3",  # Changed to MP3 for compression
             "transcript": self.base_dir / f"output/Raw/Transcripts/audio_{self.video_id}_transcript.json",
             "segments": self.base_dir / f"output/Raw/Transcripts/audio_{self.video_id}_segments.csv",
             "words": self.base_dir / f"output/Raw/Transcripts/audio_{self.video_id}_words.csv",
@@ -126,7 +126,7 @@ class FileManager:
         gcs_path_mapping = {
             # VODs bucket - organize by media type
             "video": f"{self.video_id}/video/{self.video_id}.mp4",
-            "audio": f"{self.video_id}/audio/audio_{self.video_id}.wav",
+            "audio": f"{self.video_id}/audio/audio_{self.video_id}.mp3",  # Changed to MP3 for compression
             "waveform": f"{self.video_id}/waveform/audio_{self.video_id}_waveform.json",
 
             # Transcripts bucket - organize by VOD ID
@@ -242,7 +242,19 @@ class FileManager:
         # Try alternative paths based on file type
         alt_paths = []
 
-        if file_type == "audio_sentiment":
+        if file_type == "audio":
+            # Try both MP3 and WAV formats in different locations
+            alt_paths = [
+                Path(f"/tmp/output/Raw/Audio/audio_{self.video_id}.mp3"),
+                Path(f"/tmp/output/Raw/Audio/audio_{self.video_id}.wav"),
+                Path(f"output/Raw/Audio/audio_{self.video_id}.mp3"),
+                Path(f"output/Raw/Audio/audio_{self.video_id}.wav"),
+                Path(f"/tmp/outputs/audio_{self.video_id}.mp3"),
+                Path(f"/tmp/outputs/audio_{self.video_id}.wav"),
+                Path(f"outputs/audio_{self.video_id}.mp3"),
+                Path(f"outputs/audio_{self.video_id}.wav")
+            ]
+        elif file_type == "audio_sentiment":
             # Try different casing and locations
             alt_paths = [
                 Path(f"/tmp/output/Analysis/audio/audio_{self.video_id}_sentiment.csv"),

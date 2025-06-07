@@ -6,9 +6,7 @@ This module handles downloading Twitch videos and extracting audio.
 
 import os
 import platform
-import logging
 import asyncio
-import json
 import re
 import shutil
 import time
@@ -20,14 +18,12 @@ from utils.config import (
     RAW_VIDEOS_DIR,
     RAW_AUDIO_DIR,
     BINARY_PATHS,
-    DOWNLOADS_DIR,
     TEMP_DIR
 )
 from utils.logging_setup import setup_logger
 from utils.helpers import (
     extract_video_id,
-    set_executable_permissions,
-    run_command
+    set_executable_permissions
 )
 
 # Set up logger
@@ -46,27 +42,17 @@ class TwitchVideoDownloader:
         # Create cache directory
         cache_dir = Path.home() / ".cache" / "twitch_downloader"
         cache_dir.mkdir(exist_ok=True, parents=True)
-        logger.info(f"Created cache directory at: {cache_dir}")
-
-        # Log current working directory
-        logger.info(f"Current working directory: {os.getcwd()}")
-
-        # Log directory contents
-        logger.info(f"Directory contents: {os.listdir()}")
 
         # Set up for macOS
         if platform.system() == "Darwin":
             # Set executable permissions for binaries
             set_executable_permissions(BINARY_PATHS["twitch_downloader"])
             set_executable_permissions(BINARY_PATHS["ffmpeg"])
-            logger.info(f"Set executable permissions for {BINARY_PATHS['twitch_downloader']}")
-            logger.info(f"Set executable permissions for {BINARY_PATHS['ffmpeg']}")
 
             # Create temp directory for .NET bundle extraction
             temp_dir = Path.home() / '.dotnet' / 'bundle_extract'
             temp_dir.mkdir(parents=True, exist_ok=True)
             os.environ['DOTNET_BUNDLE_EXTRACT_BASE_DIR'] = str(temp_dir)
-            logger.info(f"Set DOTNET_BUNDLE_EXTRACT_BASE_DIR to {temp_dir}")
 
     def _verify_ffmpeg_exists(self):
         """Verify that ffmpeg is installed and accessible"""
@@ -78,9 +64,7 @@ class TwitchVideoDownloader:
                 text=True,
                 check=False
             )
-            if result.returncode == 0:
-                logger.info("ffmpeg found")
-            else:
+            if result.returncode != 0:
                 # Try the local ffmpeg
                 result = subprocess.run(
                     [BINARY_PATHS["ffmpeg"], "-version"],
@@ -88,22 +72,17 @@ class TwitchVideoDownloader:
                     text=True,
                     check=False
                 )
-                if result.returncode == 0:
-                    logger.info("Local ffmpeg found")
-                else:
+                if result.returncode != 0:
                     raise FileNotFoundError("ffmpeg not found")
 
             # Also check for ffprobe
-            result = subprocess.run(
+            subprocess.run(
                 ["ffprobe", "-version"],
                 capture_output=True,
                 text=True,
                 check=False
             )
-            if result.returncode == 0:
-                logger.info("System ffprobe found")
         except FileNotFoundError:
-            logger.error("ffmpeg not found. Please install ffmpeg.")
             raise FileNotFoundError("ffmpeg not found. Please install ffmpeg.")
 
     def extract_video_id(self, url):
@@ -116,9 +95,7 @@ class TwitchVideoDownloader:
         Returns:
             str: Video ID
         """
-        video_id = extract_video_id(url)
-        logger.info(f"Extracted video ID: {video_id}")
-        return video_id
+        return extract_video_id(url)
 
     def get_video_metadata(self, video_id):
         """
@@ -176,112 +153,102 @@ class TwitchVideoDownloader:
             logger.error(f"Error getting video metadata: {str(e)}")
             return {}
 
-    async def download_video(self, video_id):
+    async def download_video_with_fallback(self, video_id: str) -> Path:
         """
-        Download a Twitch video
-
-        Args:
-            video_id (str): Twitch video ID
-
-        Returns:
-            Path: Path to the downloaded video file
+        Download video with multiple fallback strategies optimized for this system
         """
-        logger.info(f"Downloading video for {video_id}...")
+        from utils.resource_optimizer import resource_optimizer
 
-        # Define output path
+        # Get system-optimized strategies
+        strategies = resource_optimizer.get_download_strategies()
+
+        # Log system summary on first run
+        resource_optimizer.log_system_summary()
+
+        for i, strategy in enumerate(strategies):
+            try:
+                # Only log the first attempt to reduce verbosity
+                if i == 0:
+                    logger.info(f"🚀 Downloading with {strategy['quality']} quality, {strategy['threads']} threads")
+                return await self.download_video_with_strategy(video_id, strategy)
+            except Exception as e:
+                logger.warning(f"❌ Strategy {i+1} failed: {str(e)}")
+                if i == len(strategies) - 1:
+                    raise e
+                # Only log fallback attempts at debug level
+                logger.debug(f"🔄 Trying next strategy: {strategy['description']}")
+
+        raise RuntimeError("All download strategies failed")
+
+    async def download_video_with_strategy(self, video_id: str, strategy: dict) -> Path:
+        """
+        Download video with specific strategy parameters
+        """
         video_file = RAW_VIDEOS_DIR / f"{video_id}.mp4"
 
-        # Check if the file already exists
+        # Check if the file already exists (caching mechanism)
         if video_file.exists():
-            logger.info(f"Video file already exists: {video_file}")
+            file_size_mb = video_file.stat().st_size / (1024 * 1024)
+            logger.info(f"📹 Using cached video file: {file_size_mb:.1f} MB ({video_file})")
             return video_file
 
-        # Create command
+        # Create command with strategy-specific settings
         command = [
             BINARY_PATHS["twitch_downloader"],
             "videodownload",
             "--id", video_id,
             "-o", str(video_file),
-            "--quality", "720p",  # Use 720p for faster downloads and less storage
-            "--threads", "16",
-            "--temp-path", str(TEMP_DIR)
+            "--quality", strategy["quality"],
+            "--threads", str(strategy["threads"]),
+            "--bandwidth", "-1",  # Unlimited bandwidth
+            "--temp-path", str(TEMP_DIR),
+            "--collision", "Overwrite"
         ]
 
-        # Log the command
-        logger.info(f"Running download command: {' '.join(command)}")
+        return await self._execute_download_command(command, video_file)
 
-        # Log current directory contents
-        logger.info(f"Current directory contents: {os.listdir()}")
+    async def _execute_download_command(self, command: list, video_file: Path) -> Path:
+        """
+        Execute the TwitchDownloaderCLI command with system-optimized performance monitoring
+        """
+        from utils.resource_optimizer import resource_optimizer
 
-        # Check if CLI file exists and has correct permissions
-        cli_file_exists = os.path.exists(BINARY_PATHS["twitch_downloader"])
-        cli_file_permissions = oct(os.stat(BINARY_PATHS["twitch_downloader"]).st_mode) if cli_file_exists else "N/A"
-        logger.info(f"CLI file exists: {cli_file_exists}")
-        logger.info(f"CLI file permissions: {cli_file_permissions}")
+        # Verify CLI exists before running
+        if not os.path.exists(BINARY_PATHS["twitch_downloader"]):
+            raise FileNotFoundError(f"TwitchDownloaderCLI not found at {BINARY_PATHS['twitch_downloader']}")
 
-        # Additional debugging for Cloud Run
-        if not cli_file_exists:
-            logger.error(f"TwitchDownloaderCLI not found at: {BINARY_PATHS['twitch_downloader']}")
-            # List contents of the bin directory
-            bin_dir = Path(BINARY_PATHS["twitch_downloader"]).parent
-            if bin_dir.exists():
-                logger.info(f"Contents of {bin_dir}: {list(bin_dir.iterdir())}")
-            else:
-                logger.error(f"Bin directory does not exist: {bin_dir}")
-            raise FileNotFoundError(f"TwitchDownloaderCLI not found at: {BINARY_PATHS['twitch_downloader']}")
-
-        # Test if the binary can be executed (with improved error handling)
+        # Test the binary before using it (minimal check)
         try:
-            # Check if we're running in FastAPI context
-            try:
-                from api.services.subprocess_wrapper import subprocess_wrapper
-                test_result = subprocess_wrapper.run_subprocess_sync(
-                    [BINARY_PATHS["twitch_downloader"], "--help"],
-                    timeout=10,
-                    capture_output=True,
-                    check=False
-                )
-                logger.info("Using FastAPI subprocess wrapper for binary test")
-            except ImportError:
-                # Fallback to regular subprocess for standalone execution
-                test_result = subprocess.run(
-                    [BINARY_PATHS["twitch_downloader"], "--help"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10
-                )
-                logger.info("Using regular subprocess for binary test")
+            from api.services.subprocess_wrapper import subprocess_wrapper
+            subprocess_wrapper.test_twitch_cli()
+        except Exception:
+            # Continue anyway - the actual download will fail if there's a real issue
+            pass
 
-            # Log detailed output for debugging
-            logger.info(f"TwitchDownloaderCLI test - Return code: {test_result.returncode}")
-            logger.info(f"TwitchDownloaderCLI test - Stdout: {test_result.stdout[:200]}...")
-            logger.info(f"TwitchDownloaderCLI test - Stderr: {test_result.stderr[:200]}...")
+        # Get system-optimized timeout and buffer settings
+        timeout_settings = resource_optimizer.get_timeout_settings()
+        buffer_settings = resource_optimizer.get_buffer_settings()
 
-            # TwitchDownloaderCLI --help returns exit code 1 even when working correctly
-            # Check if the output contains expected help text instead of just return code
-            if test_result.stdout and ("TwitchDownloaderCLI" in test_result.stdout or "Usage:" in test_result.stdout):
-                logger.info("TwitchDownloaderCLI binary test passed (help text found)")
-            elif test_result.returncode == 1 and "TwitchDownloaderCLI" in test_result.stderr:
-                logger.info("TwitchDownloaderCLI binary test passed (binary responds correctly)")
-            else:
-                logger.warning(f"TwitchDownloaderCLI test unexpected result. Return code: {test_result.returncode}")
-                logger.warning("Continuing anyway - will test during actual download")
+        download_timeout = timeout_settings['download_timeout']
+        read_buffer_size = buffer_settings['read_buffer_size']
+        read_timeout = buffer_settings['read_timeout']
 
-        except subprocess.TimeoutExpired:
-            logger.warning("TwitchDownloaderCLI test timed out - continuing anyway")
-        except Exception as e:
-            logger.warning(f"Error testing TwitchDownloaderCLI binary: {str(e)} - continuing anyway")
-            # Don't raise an exception for binary test failures
-
-        # Create progress bar
-        pbar = tqdm(total=100, desc=f"Downloading VOD {video_id}")
-
-        # Variables to track progress
+        # Variables to track progress and create visual progress bar
         last_update_time = time.time()
-        progress_detected = False
+        stage_progress = {1: 0, 2: 0, 3: 0, 4: 0}  # Track progress for each stage
+
+        # Create progress bar for video download with cleaner format
+        from tqdm import tqdm
+        pbar = tqdm(total=100, desc="📹 Video Download", unit="%",
+                   bar_format='{desc}: {percentage:3.0f}%|{bar}| {n:.0f}/{total:.0f}%',
+                   ncols=80, leave=True)
+
+        # Log optimization settings at debug level only
+        logger.debug(f"⚙️  Using optimized settings: {download_timeout}s timeout, {read_buffer_size}B buffer")
+
+        start_time = time.time()
 
         # Run the command with timeout
-        logger.info(f"Running command: {' '.join(command)}")
         try:
             # Check if we're running in FastAPI context and use appropriate subprocess method
             try:
@@ -299,7 +266,6 @@ class TwitchVideoDownloader:
                     env=env,
                     cwd=cwd
                 )
-                logger.info("Using FastAPI subprocess wrapper environment for video download")
             except ImportError:
                 # Fallback to regular subprocess for standalone execution
                 process = await asyncio.create_subprocess_exec(
@@ -307,17 +273,11 @@ class TwitchVideoDownloader:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
-                logger.info("Using regular subprocess for video download")
         except Exception as e:
-            logger.error(f"Failed to start video download process: {str(e)}")
             raise RuntimeError(f"Failed to start video download process: {str(e)}")
 
-        # Set a timeout for the entire download process (50 minutes)
-        # This allows for large VODs (4+ hours) which can be 2-4GB at 720p
-        download_timeout = 50 * 60  # 50 minutes in seconds
-        start_time = time.time()
-
-        # Process output to update progress bar
+        # Process output with aggressive buffering for maximum performance
+        buffer = b''
         while True:
             # Check for timeout
             current_time = time.time()
@@ -331,116 +291,80 @@ class TwitchVideoDownloader:
                     await process.wait()
                 raise RuntimeError(f"Video download timed out after {download_timeout} seconds")
 
+            # Read from stdout with aggressive buffering to catch rapid updates
+            line_received = False
+
             try:
-                # Use asyncio.wait_for to add a timeout to readline
-                # Increased timeout for slow network conditions or large file processing
-                line = await asyncio.wait_for(process.stdout.readline(), timeout=60)
+                # Read multiple bytes at once to catch rapid updates (using system-optimized buffer size)
+                data = await asyncio.wait_for(process.stdout.read(read_buffer_size), timeout=read_timeout)
+                if data:
+                    buffer += data
+                    # Process all complete lines in the buffer
+                    while b'\n' in buffer:
+                        line, buffer = buffer.split(b'\n', 1)
+                        line_str = line.decode('utf-8', errors='replace').strip()
+                        if line_str:
+                            # Parse TwitchDownloaderCLI progress and update visual progress bar
+                            progress_updated = self._update_progress_bar(line_str, pbar, stage_progress)
+                            if not progress_updated:
+                                # Only print non-progress lines to avoid clutter
+                                if not any(keyword in line_str.lower() for keyword in ['status', 'downloading', 'verifying', 'finalizing']):
+                                    print(line_str, flush=True)
+                            last_update_time = current_time
+                            line_received = True
+
+                    # Also check for partial lines that might contain progress
+                    if buffer and b'[STATUS]' in buffer:
+                        partial_line = buffer.decode('utf-8', errors='replace').strip()
+                        if partial_line:
+                            self._update_progress_bar(partial_line, pbar, stage_progress)
+
             except asyncio.TimeoutError:
-                logger.warning("No output from video download process for 60 seconds, checking if process is still alive")
-                if process.returncode is not None:
-                    logger.info("Process has completed")
-                    break
-                continue
+                pass
 
-            if not line:
-                # Check if stderr has any data
-                try:
-                    err_line = await asyncio.wait_for(process.stderr.readline(), timeout=5)
-                except asyncio.TimeoutError:
-                    err_line = None
-
-                if not err_line:
-                    break
-                else:
+            # Try stderr
+            try:
+                err_line = await asyncio.wait_for(process.stderr.readline(), timeout=0.01)
+                if err_line:
                     err_str = err_line.decode('utf-8', errors='replace').strip()
-                    logger.info(f"Process stderr: {err_str}")
-                    continue
+                    if err_str:
+                        print(err_str, flush=True)  # Always show error output
+                        last_update_time = current_time
+                        line_received = True
+            except asyncio.TimeoutError:
+                pass
 
-            line_str = line.decode('utf-8', errors='replace').strip()
-
-            # Only log non-progress output to avoid duplicate logging
-            progress_line = False
-
-            # Look for progress information in the output
-            # Pattern 1: "Downloaded: 10.5%"
-            progress_match = re.search(r'Downloaded:\s+(\d+(?:\.\d+)?)%', line_str)
-            if progress_match:
-                progress = float(progress_match.group(1))
-                pbar.update(progress - pbar.n)
-                logger.info(f"Download progress: {progress}%")
-                progress_detected = True
-                progress_line = True
-                continue
-
-            # Pattern 2: "Downloading segment X/Y"
-            segment_match = re.search(r'Downloading segment (\d+)/(\d+)', line_str)
-            if segment_match:
-                current, total = map(int, segment_match.groups())
-                progress = min(100, (current / total) * 100)
-                pbar.update(progress - pbar.n)
-                logger.info(f"Download progress: {progress}% (segment {current}/{total})")
-                progress_detected = True
-                progress_line = True
-                continue
-
-            # Pattern 3: "Progress: X%"
-            progress_match2 = re.search(r'Progress:\s+(\d+(?:\.\d+)?)%', line_str)
-            if progress_match2:
-                progress = float(progress_match2.group(1))
-                pbar.update(progress - pbar.n)
-                logger.info(f"Download progress: {progress}%")
-                progress_detected = True
-                progress_line = True
-                continue
-
-            # Pattern 4: "X% complete"
-            progress_match3 = re.search(r'(\d+(?:\.\d+)?)%\s+complete', line_str)
-            if progress_match3:
-                progress = float(progress_match3.group(1))
-                pbar.update(progress - pbar.n)
-                logger.info(f"Download progress: {progress}%")
-                progress_detected = True
-                progress_line = True
-                continue
-
-            # Pattern 5: "Downloading: X%"
-            progress_match4 = re.search(r'Downloading:\s+(\d+(?:\.\d+)?)%', line_str)
-            if progress_match4:
-                progress = float(progress_match4.group(1))
-                pbar.update(progress - pbar.n)
-                logger.info(f"Download progress: {progress}%")
-                progress_detected = True
-                progress_line = True
-                continue
-
-            # Log non-progress output
-            if not progress_line:
-                logger.info(f"Process output: {line_str}")
-
-            # Fallback: If we haven't detected progress in the output but the process is still running,
-            # update the progress bar slightly every 5 seconds to show activity
-            current_time = time.time()
-            if not progress_detected and (current_time - last_update_time) > 5:
-                # Small increment (0.5%) to show activity
-                pbar.update(0.5)
-                last_update_time = current_time
-                logger.info("No progress information detected, showing activity indicator")
-
-            # Reset progress_detected flag after each line to ensure we detect if progress stops being reported
-            progress_detected = False
-
-        # Close the progress bar
-        pbar.close()
+            # Check if process finished
+            if not line_received:
+                if process.returncode is not None:
+                    # Process any remaining buffer
+                    if buffer:
+                        line_str = buffer.decode('utf-8', errors='replace').strip()
+                        if line_str:
+                            self._update_progress_bar(line_str, pbar, stage_progress)
+                    break
+                # Update progress bar periodically even without output
+                if (current_time - last_update_time) > 2:
+                    pbar.refresh()
+                    last_update_time = current_time
 
         # Wait for process to complete and get return code
         return_code = await process.wait()
 
+        # Close progress bar
+        pbar.close()
+
         if return_code != 0:
-            # If we have an error, try to get any remaining stderr content
-            stderr_data = await process.stderr.read()
-            stderr_str = stderr_data.decode('utf-8', errors='replace')
-            logger.error(f"Error downloading video: {stderr_str}")
-            raise RuntimeError(f"Error downloading video: {stderr_str}")
+            # Try to get any remaining stderr content if stderr exists
+            try:
+                if process.stderr:
+                    stderr_data = await process.stderr.read()
+                    stderr_str = stderr_data.decode('utf-8', errors='replace')
+                    if stderr_str.strip():
+                        print(f"Error output: {stderr_str}", flush=True)
+            except Exception:
+                pass
+            raise RuntimeError(f"Video download failed with return code: {return_code}")
 
         # Clean up temporary directory
         if TEMP_DIR.exists():
@@ -448,11 +372,90 @@ class TwitchVideoDownloader:
             TEMP_DIR.mkdir(exist_ok=True, parents=True)
             logger.info(f"Cleaned up temporary directory: {TEMP_DIR}")
 
+        # Log video file size
+        if video_file.exists():
+            file_size_mb = video_file.stat().st_size / (1024 * 1024)
+            logger.info(f"📹 Video file size: {file_size_mb:.1f} MB ({video_file})")
+        else:
+            logger.warning(f"Video file not found: {video_file}")
+
         return video_file
+
+    async def download_video(self, video_id):
+        """
+        Download a Twitch video using optimized fallback strategies
+
+        Args:
+            video_id (str): Twitch video ID
+
+        Returns:
+            Path: Path to the downloaded video file
+        """
+        # Use the optimized fallback strategy for maximum performance
+        return await self.download_video_with_fallback(video_id)
+
+    def _update_progress_bar(self, line_str, pbar, stage_progress):
+        """
+        Parse TwitchDownloaderCLI output and update the visual progress bar
+        Returns True if progress was updated, False otherwise
+        """
+        import re
+
+        # Parse different TwitchDownloaderCLI status patterns
+        # Pattern: [STATUS] - Fetching Video Info [1/4]
+        stage_match = re.search(r'\[STATUS\] - (.+?) \[(\d+)/4\]', line_str)
+        if stage_match:
+            stage_name = stage_match.group(1)
+            stage_num = int(stage_match.group(2))
+
+            # Update progress bar description
+            pbar.set_description(f"📹 {stage_name}")
+
+            # Calculate overall progress based on stage
+            base_progress = (stage_num - 1) * 25  # Each stage is 25% of total
+            stage_progress[stage_num] = 0  # Reset stage progress
+
+            # Update progress bar
+            total_progress = base_progress
+            pbar.n = total_progress
+            pbar.refresh()
+
+            return True
+
+        # Pattern: [STATUS] - Downloading 45% [2/4]
+        progress_match = re.search(r'\[STATUS\] - (.+?) (\d+)% \[(\d+)/4\]', line_str)
+        if progress_match:
+            stage_name = progress_match.group(1)
+            progress_percent = int(progress_match.group(2))
+            stage_num = int(progress_match.group(3))
+
+            # Update progress bar description to show current percentage
+            pbar.set_description(f"📹 {stage_name}")
+
+            # Calculate overall progress
+            base_progress = (stage_num - 1) * 25  # Each stage is 25% of total
+            stage_contribution = (progress_percent / 100) * 25  # This stage's contribution
+            total_progress = base_progress + stage_contribution
+
+            # Update stage progress tracking
+            stage_progress[stage_num] = progress_percent
+
+            # Update progress bar
+            pbar.n = total_progress
+            pbar.refresh()
+
+            return True
+
+        # Check for important info messages that should be shown
+        if any(keyword in line_str.lower() for keyword in ['info', 'missing', 'corrupt', 'redownload']):
+            print(f"ℹ️  {line_str}", flush=True)
+            return True
+
+        return False
 
     async def extract_audio(self, video_file, video_id):
         """
-        Extract audio from a video file
+        Extract compressed audio from a video file optimized for transcription
 
         Args:
             video_file (Path): Path to the video file
@@ -461,8 +464,8 @@ class TwitchVideoDownloader:
         Returns:
             Path: Path to the extracted audio file
         """
-        # Define output path
-        audio_file = RAW_AUDIO_DIR / f"audio_{video_id}.wav"
+        # Use MP3 format for much smaller file sizes
+        audio_file = RAW_AUDIO_DIR / f"audio_{video_id}.mp3"
 
         # Check if the file already exists
         if audio_file.exists():
@@ -486,24 +489,30 @@ class TwitchVideoDownloader:
             logger.warning(f"Could not get video duration: {str(e)}")
             duration = 0
 
-        # Create command
+        # Get system-optimized thread count for audio processing
+        from utils.resource_optimizer import resource_optimizer
+        cpu_cores = resource_optimizer.system_info['cpu']['logical_cores']
+        audio_threads = min(cpu_cores, 16)  # Cap at 16 threads for audio processing
+
+        # Create command for highly compressed audio optimized for speech transcription
         command = [
             BINARY_PATHS["ffmpeg"],
             "-i", str(video_file),
             "-vn",  # No video
-            "-acodec", "pcm_s16le",  # PCM 16-bit
-            "-ar", "16000",  # 16 kHz
+            "-acodec", "mp3",  # MP3 codec for compression
+            "-ar", "8000",  # 8 kHz sample rate (sufficient for speech)
             "-ac", "1",  # Mono
-            "-threads", "10",  # Use 10 threads
+            "-ab", "32k",  # Very low bitrate (32 kbps) for maximum compression
+            "-threads", str(audio_threads),  # Use system-optimized thread count
             "-y",  # Overwrite output file
             str(audio_file)
         ]
 
-        # Log the command
-        logger.info(f"Running command: {' '.join(command)}")
+        # Log audio thread count at debug level only
+        logger.debug(f"🎵 Using {audio_threads} threads for audio processing")
 
-        # Create progress bar
-        pbar = tqdm(total=100, desc="Converting to WAV")
+        # Create progress bar for audio conversion
+        pbar = tqdm(total=100, desc="🎵 Converting audio", unit="%")
 
         # Run the command
         process = await asyncio.create_subprocess_exec(
@@ -512,9 +521,9 @@ class TwitchVideoDownloader:
             stderr=asyncio.subprocess.PIPE
         )
 
-        # Set timeout for audio extraction (25 minutes)
-        # Audio extraction is usually faster than download, but large files need more time
-        audio_timeout = 25 * 60  # 25 minutes in seconds
+        # Get system-optimized timeout for audio extraction
+        timeout_settings = resource_optimizer.get_timeout_settings()
+        audio_timeout = timeout_settings['audio_timeout']
         start_time = time.time()
 
         # Process output to update progress bar
@@ -553,14 +562,6 @@ class TwitchVideoDownloader:
                     current_time = h * 3600 + m * 60 + s
                     progress = min(100, (current_time / duration) * 100)
                     pbar.update(progress - pbar.n)
-                    # Log progress updates
-                    logger.info(f"Audio conversion progress: {progress:.2f}%")
-                else:
-                    # Log non-progress output
-                    logger.info(f"Process output: {line_str.strip()}")
-            else:
-                # Log non-progress output
-                logger.info(f"Process output: {line_str.strip()}")
 
         # Wait for process to complete
         return_code = await process.wait()
@@ -570,10 +571,14 @@ class TwitchVideoDownloader:
             # If we have an error, try to get any remaining stderr content
             stderr_data = await process.stderr.read()
             stderr_str = stderr_data.decode('utf-8', errors='replace')
-            logger.error(f"Error extracting audio: {stderr_str}")
             raise RuntimeError(f"Error extracting audio: {stderr_str}")
 
-        logger.info("Audio extraction completed successfully")
+        # Log audio file size
+        if audio_file.exists():
+            file_size_mb = audio_file.stat().st_size / (1024 * 1024)
+            logger.info(f"🎵 Audio file size: {file_size_mb:.1f} MB ({audio_file})")
+        else:
+            logger.warning(f"Audio file not found: {audio_file}")
 
         return audio_file
 
