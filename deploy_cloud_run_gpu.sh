@@ -78,7 +78,16 @@ echo -e "${GREEN}✅ APIs enabled${NC}"
 echo -e "${BLUE}🐳 Building GPU-enabled Docker image...${NC}"
 if [ -f "Dockerfile.gpu" ]; then
     echo "Using Dockerfile.gpu for GPU build..."
-    gcloud builds submit --tag ${IMAGE_NAME} --file Dockerfile.gpu .
+    # Create temporary cloudbuild.yaml for custom Dockerfile
+    cat > cloudbuild.yaml << EOF
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-f', 'Dockerfile.gpu', '-t', '${IMAGE_NAME}', '.']
+images:
+- '${IMAGE_NAME}'
+EOF
+    gcloud builds submit --config cloudbuild.yaml .
+    rm cloudbuild.yaml
 else
     echo -e "${YELLOW}⚠️  Dockerfile.gpu not found, using standard Dockerfile${NC}"
     echo "Note: Make sure your Dockerfile includes GPU support"
