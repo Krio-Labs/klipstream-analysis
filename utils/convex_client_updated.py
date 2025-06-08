@@ -126,13 +126,6 @@ class ConvexManager:
         Returns:
             bool: True if video exists or was created successfully, False otherwise
         """
-        # In development mode, we'll skip video creation for now
-        # This is a complex operation that requires proper team setup
-        if os.environ.get('ENVIRONMENT', 'production') == 'development':
-            logger.info(f"Development mode: Skipping video creation for {twitch_id}")
-            logger.info("In production, this would create the missing video entry")
-            return True
-
         if not self.convex:
             logger.error("Convex client not initialized")
             return False
@@ -144,12 +137,20 @@ class ConvexManager:
                 logger.info(f"Video {twitch_id} already exists in Convex")
                 return True
 
-            logger.info(f"Video {twitch_id} not found in Convex")
-            logger.warning("Video creation not implemented yet - requires proper team and thumbnail setup")
-            return False
+            logger.info(f"Video {twitch_id} not found in Convex, creating new entry...")
+
+            # Create video with minimal information using the correct team ID
+            success = self.convex.create_video_minimal(twitch_id, "Queued")
+
+            if success:
+                logger.info(f"Successfully created video entry for {twitch_id}")
+                return True
+            else:
+                logger.error(f"Failed to create video entry for {twitch_id}")
+                return False
 
         except Exception as e:
-            logger.error(f"Error checking video existence for {twitch_id}: {str(e)}")
+            logger.error(f"Error creating video entry for {twitch_id}: {str(e)}")
             return False
 
     def update_video_status(self, twitch_id: str, status: str, max_retries: int = 3) -> bool:
@@ -186,10 +187,11 @@ class ConvexManager:
         if not hasattr(self, '_convex_failures'):
             self._convex_failures = {}
 
-        # In development mode, skip Convex updates if they consistently fail
+        # In development mode, skip only after multiple failures to allow for video creation attempts
         if os.environ.get('ENVIRONMENT', 'production') == 'development':
-            if self._convex_failures.get(twitch_id, 0) >= 3:
-                logger.info(f"Skipping Convex update for {twitch_id} in development mode (previous failures)")
+            failure_count = self._convex_failures.get(twitch_id, 0)
+            if failure_count >= 3:  # Skip after 3 failures in development mode (allows for creation attempts)
+                logger.info(f"Skipping Convex update for {twitch_id} in development mode (previous failures: {failure_count})")
                 return True
 
         # Try to update with retries
@@ -229,7 +231,7 @@ class ConvexManager:
                 if "not found" in error_msg.lower():
                     logger.warning(f"Video {twitch_id} not found in Convex database")
 
-                    # Try to create the missing video entry
+                    # Always try to create the missing video entry (both dev and production)
                     logger.info(f"Attempting to create missing video entry for {twitch_id}")
                     if self.create_video_if_missing(twitch_id):
                         logger.info(f"Successfully created video entry for {twitch_id}, retrying status update")
@@ -241,11 +243,15 @@ class ConvexManager:
                                 return True
                         except Exception as retry_error:
                             logger.error(f"Failed to update status after creating video: {str(retry_error)}")
+                    else:
+                        logger.error(f"Failed to create missing video entry for {twitch_id}")
 
-                    # In development mode, continue gracefully for missing videos
+                    # In development mode, continue gracefully even if creation fails
                     if os.environ.get('ENVIRONMENT', 'production') == 'development':
-                        logger.info(f"Continuing in development mode despite video {twitch_id} issues")
+                        logger.warning(f"Development mode: Continuing despite video creation failure for {twitch_id}")
                         return True
+                    else:
+                        return False
 
                 if attempt < max_retries - 1:
                     retry_delay = 2 ** attempt  # Exponential backoff: 1, 2, 4 seconds
@@ -302,7 +308,7 @@ class ConvexManager:
 
     def update_video_urls(self, twitch_id: str, url_updates: Dict[str, str], max_retries: int = 3) -> bool:
         """
-        Update URL fields for a video in the Convex database
+        Update URL fields for a video in the Convex database using exact schema validation
 
         Args:
             twitch_id (str): The Twitch video ID
@@ -321,28 +327,62 @@ class ConvexManager:
             logger.info(f"No URLs to update for video {twitch_id}")
             return True
 
-        # Log the URLs we're updating
-        logger.info(f"Updating URLs for video {twitch_id}: {list(url_updates.keys())}")
+        # EXACT field names from Convex schema - these are the ONLY allowed fields
+        allowed_fields = {
+            'video_url',
+            'audio_url',
+            'waveform_url',
+            'transcript_url',
+            'transcriptWords_url',
+            'chat_url',
+            'analysis_url'
+        }
+
+        # Validate and filter URL updates to only allowed fields
+        validated_urls = {}
+        rejected_fields = []
+
         for field, url in url_updates.items():
+            if field in allowed_fields:
+                validated_urls[field] = url
+            else:
+                rejected_fields.append(field)
+
+        # Log rejected fields
+        if rejected_fields:
+            logger.warning(f"Rejected invalid URL fields for video {twitch_id}: {rejected_fields}")
+            logger.warning(f"Only these fields are allowed: {sorted(allowed_fields)}")
+
+        # Skip if no valid URLs after validation
+        if not validated_urls:
+            logger.warning(f"No valid URL fields to update for video {twitch_id}")
+            return False
+
+        # Log the URLs we're updating
+        logger.info(f"Updating URLs for video {twitch_id}: {list(validated_urls.keys())}")
+        for field, url in validated_urls.items():
             logger.info(f"  {field}: {url}")
 
         # In test mode, just log the URL updates and return success
         if self.test_mode:
-            logger.info(f"[TEST MODE] Would update URLs for video {twitch_id}: {list(url_updates.keys())}")
+            logger.info(f"[TEST MODE] Would update URLs for video {twitch_id}: {list(validated_urls.keys())}")
             return True
 
         # Try to update with retries
         for attempt in range(max_retries):
             try:
-                # Call the method to update the URLs
-                logger.info(f"Updating URLs for video {twitch_id}...")
-                success = self.convex.update_urls(twitch_id, url_updates)
+                # Call the Convex mutation with exact format
+                logger.info(f"Updating URLs for video {twitch_id} (attempt {attempt + 1})...")
+                result = self.convex.mutation("video:updateUrls", {
+                    "twitchId": twitch_id,
+                    "urls": validated_urls
+                })
 
-                if success:
-                    logger.info(f"Successfully updated URLs for video {twitch_id}: {list(url_updates.keys())}")
+                if result and result.get("status") == "success":
+                    logger.info(f"Successfully updated URLs for video {twitch_id}: {list(validated_urls.keys())}")
                     return True
                 else:
-                    logger.error(f"Failed to update URLs for video {twitch_id}")
+                    logger.error(f"Failed to update URLs for video {twitch_id}: {result}")
                     if attempt < max_retries - 1:
                         retry_delay = 2 ** attempt  # Exponential backoff: 1, 2, 4 seconds
                         logger.info(f"Retrying in {retry_delay} seconds...")

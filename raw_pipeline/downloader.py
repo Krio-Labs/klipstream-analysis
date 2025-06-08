@@ -372,10 +372,17 @@ class TwitchVideoDownloader:
             TEMP_DIR.mkdir(exist_ok=True, parents=True)
             logger.info(f"Cleaned up temporary directory: {TEMP_DIR}")
 
-        # Log video file size
+        # Log video file size with enhanced formatting
         if video_file.exists():
-            file_size_mb = video_file.stat().st_size / (1024 * 1024)
-            logger.info(f"📹 Video file size: {file_size_mb:.1f} MB ({video_file})")
+            file_size_bytes = video_file.stat().st_size
+            file_size_mb = file_size_bytes / (1024 * 1024)
+            file_size_gb = file_size_bytes / (1024 * 1024 * 1024)
+
+            if file_size_gb >= 1.0:
+                logger.info(f"📹 Video file downloaded: {file_size_gb:.2f} GB ({file_size_mb:.1f} MB)")
+            else:
+                logger.info(f"📹 Video file downloaded: {file_size_mb:.1f} MB")
+            logger.info(f"📹 Video file path: {video_file}")
         else:
             logger.warning(f"Video file not found: {video_file}")
 
@@ -511,6 +518,11 @@ class TwitchVideoDownloader:
         # Log audio thread count at debug level only
         logger.debug(f"🎵 Using {audio_threads} threads for audio processing")
 
+        # Update Convex status for audio processing
+        from utils.convex_client_updated import ConvexManager
+        convex_manager = ConvexManager()
+        convex_manager.update_video_status(video_id, "Processing audio")
+
         # Create progress bar for audio conversion
         pbar = tqdm(total=100, desc="🎵 Converting audio", unit="%")
 
@@ -573,10 +585,20 @@ class TwitchVideoDownloader:
             stderr_str = stderr_data.decode('utf-8', errors='replace')
             raise RuntimeError(f"Error extracting audio: {stderr_str}")
 
-        # Log audio file size
+        # Log audio file size with enhanced formatting
         if audio_file.exists():
-            file_size_mb = audio_file.stat().st_size / (1024 * 1024)
-            logger.info(f"🎵 Audio file size: {file_size_mb:.1f} MB ({audio_file})")
+            file_size_bytes = audio_file.stat().st_size
+            file_size_mb = file_size_bytes / (1024 * 1024)
+
+            # Calculate compression ratio if video file exists
+            compression_info = ""
+            if video_file.exists():
+                video_size_mb = video_file.stat().st_size / (1024 * 1024)
+                compression_ratio = (video_size_mb / file_size_mb) if file_size_mb > 0 else 0
+                compression_info = f" (compressed {compression_ratio:.1f}x from video)"
+
+            logger.info(f"🎵 Audio file extracted: {file_size_mb:.1f} MB{compression_info}")
+            logger.info(f"🎵 Audio file path: {audio_file}")
         else:
             logger.warning(f"Audio file not found: {audio_file}")
 

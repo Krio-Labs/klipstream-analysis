@@ -220,6 +220,40 @@ class ConvexAPIClient:
         logger.info(f"Would create video with data: {video_data}")
         return False
 
+    def create_video_minimal(self, twitch_id: str, status: str = "Queued") -> bool:
+        """
+        Create a new video entry with minimal information (used by pipeline).
+
+        Args:
+            twitch_id: The Twitch video ID
+            status: Initial status for the video
+
+        Returns:
+            True if the creation was successful, False otherwise.
+        """
+        try:
+            # Use the existing insert mutation with minimal required fields
+            # Using the provided valid team ID
+            result = self.mutation("video:insert", {
+                "team": "js7bj9zgdkyj9ykvr4m6jarxkh7ep9fa",  # Valid team ID
+                "twitch_id": twitch_id,
+                "title": f"Twitch VOD {twitch_id}",
+                "thumbnail_id": "placeholder",
+                "duration": "unknown",
+                "status": status
+            })
+
+            if result:
+                logger.info(f"Successfully created video entry for Twitch ID {twitch_id}: {result}")
+                return True
+            else:
+                logger.error(f"Failed to create video entry for Twitch ID {twitch_id}: {result}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error creating video entry for Twitch ID {twitch_id}: {str(e)}")
+            return False
+
 # Example usage
 if __name__ == "__main__":
     import sys

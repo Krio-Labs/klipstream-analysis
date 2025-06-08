@@ -19,6 +19,15 @@ openai>=1.13.0
 google-cloud-storage>=3.1.0
 convex>=0.7.0
 
+# Hugging Face and ML models for local transcription
+transformers>=4.36.0
+torch>=2.1.0
+torchaudio>=2.1.0
+accelerate>=0.25.0
+
+# NeMo toolkit for NVIDIA Parakeet models
+nemo_toolkit[asr]>=2.0.0
+
 # Utilities
 tqdm>=4.62.0
 python-dotenv>=1.1.0

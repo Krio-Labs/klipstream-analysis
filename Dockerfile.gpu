@@ -1,0 +1,193 @@
+# GPU-Optimized Dockerfile for KlipStream Analysis
+# Supports NVIDIA L4 GPU for Parakeet transcription
+
+FROM nvidia/cuda:11.8-devel-ubuntu20.04
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Set timezone
+ENV TZ=UTC
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    python3.9 \
+    python3.9-dev \
+    python3-pip \
+    python3.9-distutils \
+    ffmpeg \
+    git \
+    wget \
+    curl \
+    unzip \
+    software-properties-common \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create symbolic links for python
+RUN ln -sf /usr/bin/python3.9 /usr/bin/python3
+RUN ln -sf /usr/bin/python3.9 /usr/bin/python
+
+# Upgrade pip
+RUN python3 -m pip install --upgrade pip setuptools wheel
+
+# Install PyTorch with CUDA support
+RUN pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 torchaudio==2.0.2+cu118 \
+    --index-url https://download.pytorch.org/whl/cu118
+
+# Install NeMo with ASR support
+RUN pip install nemo_toolkit[asr]==1.20.0
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install -r requirements.txt
+
+# Install additional GPU-specific dependencies
+RUN pip install \
+    nvidia-ml-py3 \
+    pynvml \
+    accelerate \
+    transformers \
+    datasets \
+    librosa \
+    soundfile \
+    scipy \
+    scikit-learn
+
+# Copy TwitchDownloaderCLI binaries
+COPY TwitchDownloaderCLI-1.54.8-Linux-x64 /app/TwitchDownloaderCLI-1.54.8-Linux-x64
+COPY TwitchDownloaderCLI-1.54.8-macOS-x64 /app/TwitchDownloaderCLI-1.54.8-macOS-x64
+COPY TwitchDownloaderCLI-1.54.8-Windows-x64.exe /app/TwitchDownloaderCLI-1.54.8-Windows-x64.exe
+
+# Make Linux binary executable
+RUN chmod +x /app/TwitchDownloaderCLI-1.54.8-Linux-x64
+
+# Copy application code
+COPY . /app/
+
+# Set GPU environment variables
+ENV CUDA_VISIBLE_DEVICES=0
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+
+# GPU Transcription Configuration
+ENV ENABLE_GPU_TRANSCRIPTION=true
+ENV PARAKEET_MODEL_NAME=nvidia/parakeet-tdt-0.6b-v2
+ENV GPU_BATCH_SIZE=8
+ENV GPU_MEMORY_LIMIT_GB=20
+ENV TRANSCRIPTION_METHOD=auto
+ENV ENABLE_FALLBACK=true
+ENV COST_OPTIMIZATION=true
+
+# Performance Configuration
+ENV CHUNK_DURATION_MINUTES=10
+ENV MAX_CONCURRENT_CHUNKS=4
+ENV ENABLE_BATCH_PROCESSING=true
+ENV ENABLE_PERFORMANCE_METRICS=true
+
+# Cloud Run Configuration
+ENV CLOUD_RUN_TIMEOUT_SECONDS=3600
+ENV MAX_FILE_SIZE_GB=2
+
+# Create necessary directories
+RUN mkdir -p /app/output/raw /app/output/analysis /app/output/transcripts /app/output/cost_tracking
+RUN mkdir -p /tmp/chunks /tmp/models
+
+# Health check script
+COPY <<EOF /app/health_check.py
+#!/usr/bin/env python3
+import os
+import sys
+import torch
+import json
+from datetime import datetime
+
+def check_gpu():
+    """Check GPU availability"""
+    try:
+        if torch.cuda.is_available():
+            gpu_count = torch.cuda.device_count()
+            gpu_name = torch.cuda.get_device_name(0) if gpu_count > 0 else "Unknown"
+            memory_total = torch.cuda.get_device_properties(0).total_memory / (1024**3) if gpu_count > 0 else 0
+            return {
+                "available": True,
+                "count": gpu_count,
+                "name": gpu_name,
+                "memory_gb": round(memory_total, 1)
+            }
+        else:
+            return {"available": False}
+    except Exception as e:
+        return {"available": False, "error": str(e)}
+
+def check_nemo():
+    """Check NeMo availability"""
+    try:
+        import nemo.collections.asr as nemo_asr
+        return {"available": True}
+    except Exception as e:
+        return {"available": False, "error": str(e)}
+
+def main():
+    health_status = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "status": "healthy",
+        "gpu": check_gpu(),
+        "nemo": check_nemo(),
+        "environment": {
+            "cuda_version": torch.version.cuda if torch.cuda.is_available() else None,
+            "pytorch_version": torch.__version__,
+            "gpu_transcription_enabled": os.getenv("ENABLE_GPU_TRANSCRIPTION", "false").lower() == "true"
+        }
+    }
+    
+    # Determine overall health
+    if not health_status["gpu"]["available"] and health_status["environment"]["gpu_transcription_enabled"]:
+        health_status["status"] = "degraded"
+        health_status["message"] = "GPU transcription enabled but GPU not available"
+    elif not health_status["nemo"]["available"]:
+        health_status["status"] = "degraded"
+        health_status["message"] = "NeMo not available"
+    
+    print(json.dumps(health_status, indent=2))
+    return 0 if health_status["status"] == "healthy" else 1
+
+if __name__ == "__main__":
+    sys.exit(main())
+EOF
+
+RUN chmod +x /app/health_check.py
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD python3 /app/health_check.py || exit 1
+
+# Expose port
+EXPOSE 8080
+
+# Set user (Cloud Run requirement)
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
+# Pre-download model to reduce cold start time (optional)
+# RUN python3 -c "
+# import os
+# if os.getenv('ENABLE_GPU_TRANSCRIPTION', 'false').lower() == 'true':
+#     try:
+#         import nemo.collections.asr as nemo_asr
+#         print('Pre-downloading Parakeet model...')
+#         model = nemo_asr.models.ASRModel.from_pretrained('nvidia/parakeet-tdt-0.6b-v2')
+#         print('Model pre-downloaded successfully')
+#     except Exception as e:
+#         print(f'Model pre-download failed: {e}')
+# "
+
+# Start command
+CMD ["python3", "main.py"]

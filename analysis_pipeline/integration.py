@@ -804,8 +804,12 @@ def create_emotion_summary(integrated_df, emotions, output_dir, video_id, smooth
         file_manager = FileManager()
         audio_file_path = file_manager.get_local_path("audio")
     except:
-        # Fallback to multiple possible paths
+        # Fallback to multiple possible paths (MP3 first for smaller files)
         possible_audio_paths = [
+            f"/tmp/output/Raw/Audio/audio_{video_id}.mp3",
+            f"/tmp/output/Raw/audio/audio_{video_id}.mp3",
+            f"output/Raw/Audio/audio_{video_id}.mp3",
+            f"Output/Raw/Audio/audio_{video_id}.mp3",
             f"/tmp/output/Raw/Audio/audio_{video_id}.wav",
             f"/tmp/output/Raw/audio/audio_{video_id}.wav",
             f"output/Raw/Audio/audio_{video_id}.wav",
@@ -2201,6 +2205,11 @@ def run_integration(video_id):
     logger.info(f"Columns rearranged for better readability")
     integrated_df.to_csv(integrated_output_path, index=False)
 
+    # Update Convex status for visualization generation
+    from utils.convex_client_updated import ConvexManager
+    convex_manager = ConvexManager()
+    convex_manager.update_video_status(video_id, "Generating visualizations")
+
     # Generate selected visualizations
     plot_highlight_comparison(integrated_df, output_dir, video_id)
     create_emotion_summary(integrated_df, ['excitement', 'funny', 'happiness', 'anger', 'sadness'],
@@ -2315,15 +2324,15 @@ def run_integration(video_id):
                 except Exception as fallback_error:
                     logger.warning(f"Fallback upload failed: {str(fallback_error)}")
 
-            # Update Convex with the transcriptAnalysisUrl if we have a GCS URI
+            # Update Convex with the analysis_url using exact field name
             if gcs_uri and upload_success:
                 try:
-                    logger.info(f"Updating Convex with transcriptAnalysisUrl: {gcs_uri}")
-                    convex_manager.update_video_urls(video_id, {"transcriptAnalysisUrl": gcs_uri})
+                    logger.info(f"Updating Convex with analysis_url: {gcs_uri}")
+                    convex_manager.update_video_urls(video_id, {"analysis_url": gcs_uri})
                 except Exception as convex_error:
                     logger.warning(f"Failed to update Convex with GCS URI: {str(convex_error)}")
             else:
-                logger.warning("No GCS URI available for transcriptAnalysisUrl update - continuing without upload")
+                logger.warning("No GCS URI available for analysis_url update - continuing without upload")
                 # In development mode, this is acceptable
                 if os.environ.get('ENVIRONMENT', 'development') == 'development':
                     logger.info("Running in development mode - GCS upload failure is non-critical")
@@ -2335,6 +2344,10 @@ def run_integration(video_id):
         # In development mode, continue even if upload fails
         if os.environ.get('ENVIRONMENT', 'development') == 'development':
             logger.info("Running in development mode - continuing despite GCS upload failure")
+
+    # Update Convex status to indicate analysis completion
+    convex_manager = ConvexManager()
+    convex_manager.update_video_status(video_id, "Finalizing analysis")
 
     logger.info("Integration completed successfully")
     return True

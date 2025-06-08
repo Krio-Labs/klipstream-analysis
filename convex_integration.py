@@ -202,6 +202,102 @@ class ConvexIntegration:
 
         return self.update_urls(twitch_id, urls)
 
+    def map_pipeline_files_to_convex_urls(self, video_id: str, files: dict) -> dict:
+        """
+        Map pipeline file outputs to exact Convex URL field names
+
+        Args:
+            video_id (str): Video ID
+            files (dict): Files dictionary from pipeline
+
+        Returns:
+            dict: URLs mapped to exact Convex field names
+        """
+        from pathlib import Path
+
+        url_mapping = {}
+
+        # Define mapping from pipeline file keys to exact Convex field names
+        file_to_convex_mapping = {
+            # Raw pipeline files
+            'video_file': 'video_url',           # MP4 video file
+            'audio_file': 'audio_url',           # MP3 audio file
+            'waveform_file': 'waveform_url',     # Waveform JSON
+            'segments_file': 'transcript_url',   # Transcript segments CSV
+            'words_file': 'transcriptWords_url', # Word-level transcript CSV
+            'chat_file': 'chat_url',             # Chat CSV file
+
+            # Analysis pipeline files
+            'analysis_file': 'analysis_url',     # Final analysis JSON
+            'integrated_file': 'analysis_url',   # Alternative name for analysis
+        }
+
+        for pipeline_key, convex_field in file_to_convex_mapping.items():
+            if pipeline_key in files and files[pipeline_key]:
+                # Generate GCS URL from file path
+                gcs_url = self._generate_gcs_url_from_path(video_id, files[pipeline_key])
+                if gcs_url:
+                    url_mapping[convex_field] = gcs_url
+                    logger.debug(f"Mapped {pipeline_key} -> {convex_field}: {gcs_url}")
+
+        return url_mapping
+
+    def _generate_gcs_url_from_path(self, video_id: str, file_path: str) -> str:
+        """
+        Generate GCS URL from local file path based on file type
+
+        Args:
+            video_id (str): Video ID for bucket path
+            file_path (str): Local file path
+
+        Returns:
+            str: GCS URL
+        """
+        from pathlib import Path
+
+        if not file_path:
+            return None
+
+        filename = Path(file_path).name
+
+        # Map files to appropriate GCS buckets based on content
+        if any(keyword in filename.lower() for keyword in ['chat']):
+            bucket = 'klipstream-chatlogs'
+        elif any(keyword in filename.lower() for keyword in ['transcript', 'segments', 'words', 'paragraphs']):
+            bucket = 'klipstream-transcripts'
+        elif any(keyword in filename.lower() for keyword in ['waveform']):
+            bucket = 'klipstream-vods-raw'
+        elif any(keyword in filename.lower() for keyword in ['analysis', 'integrated', 'sentiment', 'highlight']):
+            bucket = 'klipstream-analysis'
+        elif filename.endswith(('.mp4', '.mkv', '.avi')):
+            bucket = 'klipstream-vods-raw'
+        elif filename.endswith(('.mp3', '.wav', '.m4a')):
+            bucket = 'klipstream-vods-raw'
+        else:
+            # Default to analysis bucket for unknown files
+            bucket = 'klipstream-analysis'
+
+        return f"gs://{bucket}/{video_id}/{filename}"
+
+    def update_urls_from_files(self, video_id: str, files: dict) -> bool:
+        """
+        Convenience method to map files and update URLs in one call
+
+        Args:
+            video_id (str): Video ID
+            files (dict): Files dictionary from pipeline
+
+        Returns:
+            bool: True if successful
+        """
+        url_mapping = self.map_pipeline_files_to_convex_urls(video_id, files)
+
+        if url_mapping:
+            return self.update_urls(video_id, url_mapping)
+        else:
+            logger.info(f"No URLs to update for video {video_id}")
+            return True
+
     def create_video(self, video_data: Dict[str, Any]) -> bool:
         """
         Create a new video entry in the database.

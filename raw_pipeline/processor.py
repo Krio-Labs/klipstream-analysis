@@ -137,14 +137,20 @@ async def process_raw_files(url):
                 else:
                     logger.warning(f"Segments file not found after generation")
 
+        # Update Convex status before uploading files
+        convex_manager.update_video_status(video_id, "Uploading files")
+
         # Upload files to GCS
         uploaded_files = upload_to_gcs(video_id, files)
+
+        # Log file size summary before cleanup
+        log_file_size_summary(video_id, files)
 
         # Clean up temporary directories
         cleanup_temp_directories()
 
-        # Update Convex status to "Completed" when entire pipeline finishes
-        convex_manager.update_video_status(video_id, STATUS_COMPLETED)
+        # Update Convex status to indicate Stage 1 completion (not final completion)
+        convex_manager.update_video_status(video_id, "Processing complete")
         logger.info("✅ Pipeline completed successfully")
 
         # Convert Path objects to strings for JSON serialization
@@ -186,3 +192,58 @@ def cleanup_temp_directories():
     except Exception as e:
         logger.warning(f"Error removing temporary directories: {str(e)}")
         logger.warning("Continuing despite cleanup failure")
+
+def log_file_size_summary(video_id: str, files: dict):
+    """
+    Log a comprehensive summary of all generated file sizes
+
+    Args:
+        video_id (str): The video ID
+        files (dict): Dictionary containing file paths
+    """
+    logger.info("📊 FILE SIZE SUMMARY")
+    logger.info("=" * 50)
+
+    total_size_bytes = 0
+    file_count = 0
+
+    # Define file categories for better organization
+    file_categories = {
+        "Video Files": ["video_file"],
+        "Audio Files": ["audio_file"],
+        "Transcript Files": ["segments_file", "words_file", "paragraphs_file"],
+        "Chat Files": ["chat_file", "json_file"],
+        "Waveform Files": ["waveform_file"]
+    }
+
+    for category, file_keys in file_categories.items():
+        category_size = 0
+        category_files = []
+
+        for key in file_keys:
+            if key in files and files[key]:
+                file_path = Path(files[key])
+                if file_path.exists():
+                    file_size = file_path.stat().st_size
+                    file_size_mb = file_size / (1024 * 1024)
+                    category_size += file_size
+                    total_size_bytes += file_size
+                    file_count += 1
+                    category_files.append(f"  • {file_path.name}: {file_size_mb:.1f} MB")
+
+        if category_files:
+            category_size_mb = category_size / (1024 * 1024)
+            logger.info(f"📁 {category} ({category_size_mb:.1f} MB total):")
+            for file_info in category_files:
+                logger.info(file_info)
+
+    # Overall summary
+    total_size_mb = total_size_bytes / (1024 * 1024)
+    total_size_gb = total_size_bytes / (1024 * 1024 * 1024)
+
+    logger.info("=" * 50)
+    if total_size_gb >= 1.0:
+        logger.info(f"🎯 TOTAL: {file_count} files, {total_size_gb:.2f} GB ({total_size_mb:.1f} MB)")
+    else:
+        logger.info(f"🎯 TOTAL: {file_count} files, {total_size_mb:.1f} MB")
+    logger.info("=" * 50)
