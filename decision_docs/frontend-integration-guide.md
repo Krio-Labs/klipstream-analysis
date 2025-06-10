@@ -5,19 +5,23 @@ This guide provides a comprehensive implementation strategy for integrating your
 ## 🚀 **PRODUCTION API - READY TO USE**
 
 ### **Live API Endpoint:**
-- **Base URL**: `https://klipstream-analysis-4vyl5ph7lq-uc.a.run.app`
-- **Status**: ✅ **LIVE & OPERATIONAL**
-- **Health Check**: https://klipstream-analysis-4vyl5ph7lq-uc.a.run.app/health
-- **API Docs**: https://klipstream-analysis-4vyl5ph7lq-uc.a.run.app/docs
+- **Base URL**: `https://klipstream-analysis-771064872704.us-central1.run.app`
+- **Status**: ✅ **LIVE & OPERATIONAL** (Updated: June 2025)
+- **Health Check**: https://klipstream-analysis-771064872704.us-central1.run.app/health
+- **API Docs**: https://klipstream-analysis-771064872704.us-central1.run.app/docs
+- **Current Revision**: `klipstream-analysis-00062-pzz`
 
 ### **Verified Working Features:**
 - ✅ Video downloads (TwitchDownloaderCLI working)
 - ✅ Audio extraction (FFmpeg processing)
 - ✅ Transcription (Deepgram API fixed)
-- ✅ Database integration (Convex with error handling)
+- ✅ Database integration (Convex with enhanced error handling)
 - ✅ File storage (Google Cloud Storage)
 - ✅ Real-time progress tracking
 - ✅ Comprehensive error handling
+- ✅ **NEW**: Analysis endpoint '_id' field access fixed (June 2025)
+- ✅ **NEW**: Enhanced Convex database resilience
+- ✅ **NEW**: Improved fallback mechanisms for failed operations
 
 ## 🎯 Integration Transformation
 
@@ -85,8 +89,8 @@ src/
 Add to your `.env.local`:
 
 ```bash
-# 🚀 PRODUCTION API CONFIGURATION - LIVE & OPERATIONAL
-NEXT_PUBLIC_API_URL=https://klipstream-analysis-4vyl5ph7lq-uc.a.run.app
+# 🚀 PRODUCTION API CONFIGURATION - LIVE & OPERATIONAL (Updated June 2025)
+NEXT_PUBLIC_API_URL=https://klipstream-analysis-771064872704.us-central1.run.app
 NEXT_PUBLIC_API_VERSION=v1
 
 # ✅ VERIFIED ENDPOINTS
@@ -157,7 +161,41 @@ testAnalysis();
 ```
 
 ### **3. View API Documentation:**
-Visit: https://klipstream-analysis-4vyl5ph7lq-uc.a.run.app/docs
+Visit: https://klipstream-analysis-771064872704.us-central1.run.app/docs
+
+## 🆕 **Recent API Improvements (June 2025)**
+
+### **Critical Fixes Implemented:**
+
+#### 1. **Analysis Endpoint Error Resolution**
+- **Issue**: `KeyError: '_id'` when accessing Convex database documents
+- **Fix**: Added comprehensive field validation and error handling
+- **Impact**: Analysis endpoint now returns 200 status instead of 500 errors
+
+#### 2. **Enhanced Database Resilience**
+- **Improvement**: Added fallback mechanisms for Convex operations
+- **Benefit**: API continues to function even when database queries fail
+- **Implementation**: Mock data support for testing and graceful degradation
+
+#### 3. **Better Error Handling**
+- **Enhancement**: Improved logging and error messages
+- **Benefit**: Easier debugging and production issue resolution
+- **Feature**: Comprehensive try-catch blocks with detailed error reporting
+
+### **API Response Example (Fixed):**
+```json
+{
+  "status": "success",
+  "message": "Analysis started successfully",
+  "job_id": "3dba326c-afd7-40f6-874b-8871ccc6b0da",
+  "video_id": "2319123456",
+  "progress": {
+    "percentage": 0.0,
+    "current_stage": "Queued",
+    "estimated_completion_seconds": 3600
+  }
+}
+```
 
 ## 📋 **Current API Endpoints - Production Ready**
 
@@ -1769,15 +1807,17 @@ export default function DashboardPage() {
 - [ ] Deploy to production
 
 ### **Support & Troubleshooting:**
-- **API Health**: Check https://klipstream-analysis-4vyl5ph7lq-uc.a.run.app/health
-- **API Docs**: Visit https://klipstream-analysis-4vyl5ph7lq-uc.a.run.app/docs
+- **API Health**: Check https://klipstream-analysis-771064872704.us-central1.run.app/health
+- **API Docs**: Visit https://klipstream-analysis-771064872704.us-central1.run.app/docs
 - **Logs**: Monitor Cloud Run logs for detailed error information
-- **Status**: All major issues have been resolved as of latest deployment
+- **Status**: All major issues have been resolved as of latest deployment (June 2025)
+- **Recent Fix**: Resolved '_id' field access error in analysis endpoint
 
 This comprehensive guide provides everything needed to transform your Next.js frontend to fully leverage the new FastAPI backend capabilities! 🚀
 
 ---
 
-**Last Updated**: January 2025
+**Last Updated**: June 2025
 **API Status**: ✅ Production Ready
-**Deployment**: Google Cloud Run (klipstream-analysis-00030-cvx)
+**Deployment**: Google Cloud Run (klipstream-analysis-00062-pzz)
+**Recent Updates**: Fixed analysis endpoint '_id' error, enhanced error handling
