@@ -20,9 +20,8 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip
 RUN python3 -m pip install --upgrade pip setuptools wheel
 
-# Install PyTorch with CUDA support
-RUN pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 torchaudio==2.0.2+cu118 \
-    --index-url https://download.pytorch.org/whl/cu118
+# Install PyTorch (CPU version for Cloud Run compatibility)
+RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Install Cython first (required for NeMo dependencies)
 RUN pip install Cython
