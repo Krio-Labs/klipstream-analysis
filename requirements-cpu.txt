@@ -1,0 +1,60 @@
+# CPU-only requirements for Cloud Run deployment
+# This file excludes GPU-specific packages to avoid conflicts
+
+# Core FastAPI and web framework
+fastapi>=0.104.1
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+python-multipart>=0.0.6
+
+# HTTP and async support
+httpx>=0.25.2
+aiofiles>=23.2.1
+asyncio-throttle>=1.0.2
+aiohttp>=3.9.0
+
+# Environment and configuration
+python-dotenv>=1.0.0
+pyyaml>=6.0.1
+
+# Google Cloud services
+google-cloud-storage>=3.1.0
+google-auth>=2.23.4
+
+# Convex database
+convex>=0.7.0
+
+# Audio and video processing
+pydub>=0.25.1
+librosa>=0.10.1
+soundfile>=0.12.1
+
+# Data processing and analysis
+pandas>=2.1.3
+numpy>=1.24.0
+scipy>=1.11.4
+scikit-learn>=1.3.2
+
+# Sentiment analysis (CPU-only)
+transformers>=4.36.0
+accelerate>=0.25.0
+
+# Progress bars and utilities
+tqdm>=4.66.1
+requests>=2.31.0
+beautifulsoup4>=4.12.2
+
+# Text processing
+nltk>=3.8.1
+textstat>=0.7.3
+
+# Plotting and visualization
+matplotlib>=3.8.2
+seaborn>=0.13.0
+
+# Development and testing
+pytest>=7.4.3
+pytest-asyncio>=0.21.1
+
+# Note: PyTorch CPU versions are installed separately in Dockerfile
+# to avoid conflicts with GPU versions in main requirements.txt

@@ -15,8 +15,9 @@ class ProcessingStage(str, Enum):
     """Enumeration of processing stages"""
     QUEUED = "Queued"
     DOWNLOADING = "Downloading"
-    FETCHING_CHAT = "Fetching chat"
+    GENERATING_WAVEFORM = "Generating waveform"
     TRANSCRIBING = "Transcribing"
+    FETCHING_CHAT = "Fetching chat"
     ANALYZING = "Analyzing"
     FINDING_HIGHLIGHTS = "Finding highlights"
     COMPLETED = "Completed"
@@ -34,16 +35,48 @@ class ErrorType(str, Enum):
     UNKNOWN_ERROR = "unknown_error"
 
 
+class TranscriptionMethod(str, Enum):
+    """Enumeration of available transcription methods"""
+    AUTO = "auto"
+    PARAKEET = "parakeet"
+    DEEPGRAM = "deepgram"
+    HYBRID = "hybrid"
+
+
+class TranscriptionConfig(BaseModel):
+    """Configuration for transcription processing"""
+    method: TranscriptionMethod = Field(TranscriptionMethod.AUTO, description="Transcription method to use")
+    enable_gpu: bool = Field(True, description="Enable GPU acceleration when available")
+    enable_fallback: bool = Field(True, description="Enable fallback to alternative methods on failure")
+    cost_optimization: bool = Field(True, description="Enable cost optimization for method selection")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "method": "auto",
+                "enable_gpu": True,
+                "enable_fallback": True,
+                "cost_optimization": True
+            }
+        }
+
+
 class AnalysisRequest(BaseModel):
     """Request model for starting video analysis"""
     url: str = Field(..., description="Twitch VOD URL to analyze")
     callback_url: Optional[HttpUrl] = Field(None, description="Optional webhook URL for status updates")
-    
+    transcription_config: Optional[TranscriptionConfig] = Field(None, description="Optional transcription configuration")
+
     class Config:
         json_schema_extra = {
             "example": {
                 "url": "https://www.twitch.tv/videos/2434635255",
-                "callback_url": "https://your-app.com/api/webhook/video-status"
+                "callback_url": "https://your-app.com/api/webhook/video-status",
+                "transcription_config": {
+                    "method": "auto",
+                    "enable_gpu": True,
+                    "cost_optimization": True
+                }
             }
         }
 
@@ -73,21 +106,34 @@ class ErrorInfo(BaseModel):
 
 class AnalysisResults(BaseModel):
     """Analysis results when processing is complete"""
-    # File URLs
-    video_file_url: str = Field(..., description="URL to the processed video file")
-    transcript_file_url: str = Field(..., description="URL to the transcript file")
-    highlights_file_url: str = Field(..., description="URL to the highlights file")
-    analysis_report_url: str = Field(..., description="URL to the comprehensive analysis report")
-    
+    # Core file URLs (using exact Convex field names)
+    video_url: Optional[str] = Field(None, description="URL to the processed video file")
+    audio_url: Optional[str] = Field(None, description="URL to the processed audio file")
+    waveform_url: Optional[str] = Field(None, description="URL to the waveform visualization file")
+    transcript_url: Optional[str] = Field(None, description="URL to the transcript segments file")
+    transcriptWords_url: Optional[str] = Field(None, description="URL to the transcript words file")
+    chat_url: Optional[str] = Field(None, description="URL to the chat log file")
+    analysis_url: Optional[str] = Field(None, description="URL to the integrated analysis file")
+
+    # Additional file URLs
+    highlights_url: Optional[str] = Field(None, description="URL to the highlights file")
+    audio_sentiment_url: Optional[str] = Field(None, description="URL to the audio sentiment analysis file")
+    chat_sentiment_url: Optional[str] = Field(None, description="URL to the chat sentiment analysis file")
+
     # Summary statistics
-    video_duration_seconds: float = Field(..., description="Video duration in seconds")
-    transcript_word_count: int = Field(..., description="Number of words in transcript")
-    highlights_count: int = Field(..., description="Number of highlights detected")
-    sentiment_score: float = Field(..., description="Overall sentiment score")
-    
+    video_duration_seconds: Optional[float] = Field(None, description="Video duration in seconds")
+    transcript_word_count: Optional[int] = Field(None, description="Number of words in transcript")
+    highlights_count: Optional[int] = Field(None, description="Number of highlights detected")
+    sentiment_score: Optional[float] = Field(None, description="Overall sentiment score")
+
     # Processing statistics
-    processing_time_seconds: float = Field(..., description="Total processing time")
-    file_sizes: Dict[str, int] = Field(..., description="File sizes in bytes")
+    processing_time_seconds: Optional[float] = Field(None, description="Total processing time")
+    file_sizes: Optional[Dict[str, int]] = Field(None, description="File sizes in bytes")
+
+    # Transcription metadata
+    transcription_method_used: Optional[str] = Field(None, description="Transcription method that was used")
+    transcription_cost_estimate: Optional[float] = Field(None, description="Estimated transcription cost in USD")
+    gpu_used: Optional[bool] = Field(None, description="Whether GPU acceleration was used")
 
 
 class AnalysisResponse(BaseModel):

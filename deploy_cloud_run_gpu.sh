@@ -21,7 +21,7 @@ TIMEOUT="3600"
 # Service Account
 SERVICE_ACCOUNT_EMAIL="klipstream-analysis@${PROJECT_ID}.iam.gserviceaccount.com"
 
-# Environment Variables for GPU Transcription
+# Environment Variables for GPU Transcription (Updated 2025-06-10)
 ENV_VARS="ENABLE_GPU_TRANSCRIPTION=true"
 ENV_VARS="${ENV_VARS},TRANSCRIPTION_METHOD=auto"
 ENV_VARS="${ENV_VARS},PARAKEET_MODEL_NAME=nvidia/parakeet-tdt-0.6b-v2"
@@ -35,6 +35,25 @@ ENV_VARS="${ENV_VARS},SHORT_FILE_THRESHOLD_HOURS=2"
 ENV_VARS="${ENV_VARS},LONG_FILE_THRESHOLD_HOURS=4"
 ENV_VARS="${ENV_VARS},ENABLE_PERFORMANCE_METRICS=true"
 ENV_VARS="${ENV_VARS},LOG_TRANSCRIPTION_COSTS=true"
+
+# API Configuration
+ENV_VARS="${ENV_VARS},FASTAPI_MODE=true"
+ENV_VARS="${ENV_VARS},API_VERSION=2.0.0"
+ENV_VARS="${ENV_VARS},ENABLE_ASYNC_API=true"
+
+# Cloud Environment Configuration
+ENV_VARS="${ENV_VARS},CLOUD_ENVIRONMENT=true"
+ENV_VARS="${ENV_VARS},USE_CLOUD_STORAGE=true"
+ENV_VARS="${ENV_VARS},GCS_PROJECT_ID=klipstream"
+
+# Convex Configuration (Deploy key not needed for client connections)
+ENV_VARS="${ENV_VARS},CONVEX_URL=${CONVEX_URL:-}"
+
+# Deepgram Configuration (for fallback)
+ENV_VARS="${ENV_VARS},DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}"
+
+# Nebius Configuration (for sentiment analysis)
+ENV_VARS="${ENV_VARS},NEBIUS_API_KEY=${NEBIUS_API_KEY:-}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -200,10 +219,24 @@ echo ""
 
 echo -e "${BLUE}🧪 Testing Commands${NC}"
 echo "=================="
-echo "Test transcription endpoint:"
-echo "curl -X POST \"${SERVICE_URL}/transcribe\" \\"
+echo "Test API health:"
+echo "curl \"${SERVICE_URL}/health\""
+echo ""
+echo "Test API info:"
+echo "curl \"${SERVICE_URL}/\""
+echo ""
+echo "Test transcription methods:"
+echo "curl \"${SERVICE_URL}/api/v1/transcription/methods\""
+echo ""
+echo "Start video analysis:"
+echo "curl -X POST \"${SERVICE_URL}/api/v1/analysis\" \\"
 echo "  -H \"Content-Type: application/json\" \\"
-echo "  -d '{\"video_url\": \"YOUR_VIDEO_URL\"}'"
+echo "  -d '{\"url\": \"https://www.twitch.tv/videos/YOUR_VIDEO_ID\"}'"
+echo ""
+echo "Legacy endpoint (backward compatibility):"
+echo "curl -X POST \"${SERVICE_URL}/legacy/run_pipeline\" \\"
+echo "  -H \"Content-Type: application/json\" \\"
+echo "  -d '{\"url\": \"https://www.twitch.tv/videos/YOUR_VIDEO_ID\"}'"
 echo ""
 
 echo -e "${BLUE}💰 Cost Monitoring${NC}"

@@ -31,7 +31,7 @@ STATUS_FAILED = "Failed"
 from utils.helpers import extract_video_id
 
 from .downloader import TwitchVideoDownloader
-from .transcriber import TranscriptionHandler
+from .transcription.router import TranscriptionRouter
 from .waveform import generate_waveform
 from .chat import download_chat_data
 from .uploader import upload_to_gcs
@@ -97,14 +97,53 @@ async def process_raw_files(url):
         convex_manager.update_video_status(video_id, STATUS_TRANSCRIBING)
         logger.info("🎤 Generating transcript...")
 
-        # Generate transcript (depends on audio)
-        transcriber = TranscriptionHandler()
-        transcript_result = await transcriber.process_audio_files(
-            video_id,
-            str(download_result["audio_file"])
-        )
-        files.update(transcript_result)
-        logger.info("✅ Transcript generation completed")
+        # Generate transcript using new intelligent transcription router
+        try:
+            transcriber = TranscriptionRouter()
+            transcript_result = await transcriber.transcribe(
+                audio_file_path=str(download_result["audio_file"]),
+                video_id=video_id,
+                output_dir=None  # Will use default output directory
+            )
+
+            # Check for transcription errors
+            if transcript_result.get("error"):
+                logger.error(f"Transcription failed: {transcript_result['error']}")
+                raise RuntimeError(f"Transcription failed: {transcript_result['error']}")
+
+            # Extract transcription metadata for cost tracking and performance monitoring
+            transcription_metadata = transcript_result.get("transcription_metadata", {})
+            if transcription_metadata:
+                method_used = transcription_metadata.get("method_used", "unknown")
+                cost_estimate = transcription_metadata.get("cost_estimate", 0.0)
+                gpu_used = transcription_metadata.get("gpu_used", False)
+                processing_time = transcription_metadata.get("processing_time_seconds", 0.0)
+
+                logger.info(f"🎤 Transcription completed using {method_used}")
+                logger.info(f"💰 Estimated cost: ${cost_estimate:.3f}")
+                logger.info(f"🖥️  GPU acceleration: {'Yes' if gpu_used else 'No'}")
+                logger.info(f"⏱️  Processing time: {processing_time:.1f}s")
+
+            files.update(transcript_result)
+            logger.info("✅ Transcript generation completed")
+
+        except Exception as e:
+            logger.error(f"❌ Transcription failed: {str(e)}")
+            # Check if fallback to Deepgram is possible
+            logger.info("🔄 Attempting fallback transcription with Deepgram...")
+            try:
+                # Import the legacy transcriber as fallback
+                from .transcriber import TranscriptionHandler
+                fallback_transcriber = TranscriptionHandler()
+                transcript_result = await fallback_transcriber.process_audio_files(
+                    video_id,
+                    str(download_result["audio_file"])
+                )
+                files.update(transcript_result)
+                logger.info("✅ Fallback transcription completed")
+            except Exception as fallback_error:
+                logger.error(f"❌ Fallback transcription also failed: {str(fallback_error)}")
+                raise RuntimeError(f"All transcription methods failed. Primary: {str(e)}, Fallback: {str(fallback_error)}")
 
         # Generate sliding windows from transcript data
         logger.info("📊 Generating sliding windows...")
@@ -156,14 +195,20 @@ async def process_raw_files(url):
         # Convert Path objects to strings for JSON serialization
         from main import convert_paths_to_strings
 
-        # Return results
-        return {
+        # Return results with transcription metadata
+        result = {
             "status": "completed",
             "video_id": video_id,
             "twitch_info": download_result.get("twitch_info", {}),
             "files": convert_paths_to_strings(files),
             "uploaded_files": convert_paths_to_strings(uploaded_files)
         }
+
+        # Add transcription metadata if available
+        if 'transcription_metadata' in locals() and transcription_metadata:
+            result["transcription_metadata"] = transcription_metadata
+
+        return result
 
     except Exception as e:
         logger.error(f"Error processing raw files: {str(e)}")

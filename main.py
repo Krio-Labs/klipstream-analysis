@@ -23,6 +23,7 @@ import time
 import argparse
 import yaml
 import functions_framework
+import platform
 from dotenv import load_dotenv
 
 # Import utilities
@@ -65,6 +66,174 @@ except Exception as e:
 # Set up logger
 logger = setup_logger("main", "main.log")
 
+def detect_gpu_capabilities():
+    """
+    Detect available GPU capabilities for transcription optimization
+
+    Returns:
+        dict: GPU capabilities including type, availability, and memory
+    """
+    gpu_info = {
+        "nvidia_cuda_available": False,
+        "apple_metal_available": False,
+        "gpu_memory_gb": 0,
+        "recommended_method": "deepgram"
+    }
+
+    try:
+        # Check for NVIDIA CUDA
+        import torch
+        if torch.cuda.is_available():
+            gpu_info["nvidia_cuda_available"] = True
+            gpu_info["gpu_memory_gb"] = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            gpu_info["recommended_method"] = "parakeet"
+            logger.info(f"NVIDIA CUDA detected: {gpu_info['gpu_memory_gb']:.1f}GB memory")
+        else:
+            logger.info("NVIDIA CUDA not available")
+    except ImportError:
+        logger.info("PyTorch not available for CUDA detection")
+
+    try:
+        # Check for Apple Silicon Metal Performance Shaders
+        if platform.system() == "Darwin":  # macOS
+            import subprocess
+            result = subprocess.run(["system_profiler", "SPHardwareDataType"],
+                                  capture_output=True, text=True)
+            if "Apple" in result.stdout and ("M1" in result.stdout or "M2" in result.stdout or "M3" in result.stdout):
+                gpu_info["apple_metal_available"] = True
+                gpu_info["recommended_method"] = "parakeet"
+                logger.info("Apple Silicon with Metal Performance Shaders detected")
+    except Exception as e:
+        logger.debug(f"Apple Silicon detection failed: {e}")
+
+    return gpu_info
+
+def setup_gcs_authentication():
+    """
+    Set up Google Cloud Storage authentication
+    """
+    try:
+        # Check if we're in Cloud Run (service account automatically available)
+        if os.environ.get('K_SERVICE'):
+            logger.info("🔐 Running in Cloud Run - using service account authentication")
+            return True
+
+        # Check if service account key file exists
+        service_account_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+        if service_account_path and Path(service_account_path).exists():
+            logger.info(f"🔐 Using service account key: {service_account_path}")
+            return True
+
+        # Try to use gcloud auth application-default login
+        import subprocess
+        try:
+            result = subprocess.run(['gcloud', 'auth', 'application-default', 'print-access-token'],
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                logger.info("🔐 Using gcloud application-default credentials")
+                return True
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+        # If no authentication found, try to authenticate
+        logger.warning("🔐 No GCS authentication found. Attempting to authenticate...")
+        try:
+            auth_result = subprocess.run(['gcloud', 'auth', 'application-default', 'login'],
+                                       timeout=60)
+            if auth_result.returncode == 0:
+                logger.info("🔐 GCS authentication successful")
+                return True
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            logger.error(f"🔐 GCS authentication failed: {e}")
+            logger.error("Please run: gcloud auth application-default login")
+            return False
+
+        return False
+
+    except Exception as e:
+        logger.error(f"🔐 GCS authentication setup failed: {e}")
+        return False
+
+def configure_transcription_environment():
+    """
+    Configure transcription environment based on available hardware and user preferences
+    """
+    # Detect GPU capabilities
+    gpu_info = detect_gpu_capabilities()
+
+    # Set environment variables for transcription configuration
+    transcription_config = {
+        "TRANSCRIPTION_METHOD": os.environ.get("TRANSCRIPTION_METHOD", "auto"),
+        "ENABLE_GPU_TRANSCRIPTION": os.environ.get("ENABLE_GPU_TRANSCRIPTION", "true"),
+        "ENABLE_FALLBACK": os.environ.get("ENABLE_FALLBACK", "true"),
+        "COST_OPTIMIZATION": os.environ.get("COST_OPTIMIZATION", "true"),
+        "GPU_MEMORY_LIMIT_GB": os.environ.get("GPU_MEMORY_LIMIT_GB", "20"),
+        "PARAKEET_MODEL_NAME": os.environ.get("PARAKEET_MODEL_NAME", "nvidia/parakeet-tdt-0.6b-v2")
+    }
+
+    # Auto-configure based on detected hardware
+    if transcription_config["TRANSCRIPTION_METHOD"] == "auto":
+        if gpu_info["nvidia_cuda_available"] and gpu_info["gpu_memory_gb"] >= 4:
+            transcription_config["TRANSCRIPTION_METHOD"] = "parakeet"
+            logger.info("Auto-configured for NVIDIA Parakeet GPU transcription")
+        elif gpu_info["apple_metal_available"]:
+            transcription_config["TRANSCRIPTION_METHOD"] = "parakeet"
+            logger.info("Auto-configured for Apple Silicon Parakeet transcription")
+        else:
+            transcription_config["TRANSCRIPTION_METHOD"] = "deepgram"
+            logger.info("Auto-configured for Deepgram cloud transcription")
+
+    # Apply configuration to environment
+    for key, value in transcription_config.items():
+        os.environ[key] = str(value)
+        logger.debug(f"Set {key}={value}")
+
+    return transcription_config, gpu_info
+
+def configure_gpu_acceleration(gpu_info):
+    """
+    Configure GPU acceleration for various pipeline processes
+
+    Args:
+        gpu_info: GPU capabilities information
+
+    Returns:
+        dict: GPU acceleration configuration
+    """
+    gpu_config = {
+        "transcription_gpu": False,
+        "audio_processing_gpu": False,
+        "sentiment_analysis_gpu": False,
+        "waveform_gpu": False
+    }
+
+    # Enable GPU acceleration based on available hardware
+    if gpu_info["nvidia_cuda_available"] or gpu_info["apple_metal_available"]:
+        gpu_config["transcription_gpu"] = True
+        logger.info("🚀 GPU acceleration enabled for transcription")
+
+        # Enable audio processing GPU acceleration
+        if gpu_info["gpu_memory_gb"] >= 4:  # Require at least 4GB for audio processing
+            gpu_config["audio_processing_gpu"] = True
+            logger.info("🚀 GPU acceleration enabled for audio processing")
+
+        # Enable sentiment analysis GPU acceleration for larger models
+        if gpu_info["gpu_memory_gb"] >= 8:  # Require 8GB+ for sentiment models
+            gpu_config["sentiment_analysis_gpu"] = True
+            logger.info("🚀 GPU acceleration enabled for sentiment analysis")
+
+        # Enable waveform GPU acceleration (lightweight)
+        gpu_config["waveform_gpu"] = True
+        logger.info("🚀 GPU acceleration enabled for waveform generation")
+
+    # Set environment variables for GPU acceleration
+    for process, enabled in gpu_config.items():
+        env_var = f"ENABLE_{process.upper()}"
+        os.environ[env_var] = "true" if enabled else "false"
+        logger.debug(f"Set {env_var}={enabled}")
+
+    return gpu_config
+
 def cleanup():
     """
     Clean up multiprocessing resources to prevent warnings
@@ -98,6 +267,20 @@ async def run_integrated_pipeline(url):
         # Extract video ID
         video_id = extract_video_id(url)
         logger.info(f"🎬 Starting pipeline for video: {video_id}")
+
+        # Set up Google Cloud Storage authentication
+        gcs_auth_success = setup_gcs_authentication()
+        if not gcs_auth_success:
+            logger.warning("⚠️  GCS authentication failed - file uploads may not work")
+
+        # Configure transcription environment based on available hardware
+        transcription_config, gpu_info = configure_transcription_environment()
+        logger.info(f"🎤 Transcription method: {transcription_config['TRANSCRIPTION_METHOD']}")
+        logger.info(f"🖥️  GPU capabilities: CUDA={gpu_info['nvidia_cuda_available']}, Metal={gpu_info['apple_metal_available']}")
+
+        # Configure GPU acceleration for other pipeline processes
+        gpu_config = configure_gpu_acceleration(gpu_info)
+        logger.info(f"🚀 GPU acceleration: {sum(gpu_config.values())}/{len(gpu_config)} processes enabled")
 
         # Initialize file manager
         file_manager = FileManager(video_id)
@@ -136,6 +319,7 @@ async def run_integrated_pipeline(url):
             video_id = raw_result["video_id"]
             files = raw_result["files"]
             twitch_info = raw_result.get("twitch_info", {})
+            transcription_metadata = raw_result.get("transcription_metadata", {})
 
         except Exception as e:
             logger.error(f"❌ Stage 1 failed: {str(e)}")
@@ -190,7 +374,8 @@ async def run_integrated_pipeline(url):
         # Update Convex status to "Completed"
         convex_manager.update_video_status(video_id, STATUS_COMPLETED)
 
-        return {
+        # Prepare final result with transcription metadata
+        result = {
             "status": "completed",
             "video_id": video_id,
             "twitch_info": twitch_info,
@@ -198,6 +383,12 @@ async def run_integrated_pipeline(url):
             "stage_times": stage_times,
             "total_duration": total_duration
         }
+
+        # Add transcription metadata if available
+        if transcription_metadata:
+            result["transcription_metadata"] = transcription_metadata
+
+        return result
 
     except Exception as e:
         logger.error(f"Integrated pipeline failed: {str(e)}")

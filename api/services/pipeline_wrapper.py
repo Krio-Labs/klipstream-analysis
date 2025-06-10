@@ -38,11 +38,12 @@ class PipelineProgressTracker:
         self.progress_callback = progress_callback
         self.stage_weights = {
             ProcessingStage.QUEUED: (0, 0),
-            ProcessingStage.DOWNLOADING: (0, 30),
-            ProcessingStage.FETCHING_CHAT: (30, 35),
-            ProcessingStage.TRANSCRIBING: (35, 65),
-            ProcessingStage.ANALYZING: (65, 90),
-            ProcessingStage.FINDING_HIGHLIGHTS: (90, 95),
+            ProcessingStage.DOWNLOADING: (0, 20),
+            ProcessingStage.GENERATING_WAVEFORM: (20, 25),
+            ProcessingStage.TRANSCRIBING: (25, 50),
+            ProcessingStage.FETCHING_CHAT: (50, 60),
+            ProcessingStage.ANALYZING: (60, 85),
+            ProcessingStage.FINDING_HIGHLIGHTS: (85, 95),
             ProcessingStage.COMPLETED: (100, 100)
         }
         self.current_stage = ProcessingStage.QUEUED
@@ -92,7 +93,8 @@ class EnhancedPipelineWrapper:
         self,
         video_url: str,
         job_id: str,
-        progress_callback: Optional[Callable] = None
+        progress_callback: Optional[Callable] = None,
+        transcription_config: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """
         Run the integrated pipeline with enhanced progress tracking and error handling
@@ -109,10 +111,16 @@ class EnhancedPipelineWrapper:
         
         try:
             logger.info(f"Starting enhanced pipeline for job {job_id}")
-            
+
             # Stage 1: Queue and initialize
             await tracker.update_progress(ProcessingStage.QUEUED, 0, "Initializing analysis...")
-            
+
+            # Configure transcription settings if provided
+            original_env = {}
+            if transcription_config:
+                logger.info(f"Applying transcription configuration: {transcription_config}")
+                original_env = self._apply_transcription_config(transcription_config)
+
             # Import the main pipeline function
             from main import run_integrated_pipeline
             
@@ -157,14 +165,29 @@ class EnhancedPipelineWrapper:
             
         except Exception as e:
             logger.error(f"Pipeline failed for job {job_id}: {str(e)}")
-            
-            # Classify the error
-            error_info = error_classifier.classify_error(e, {
+
+            # Enhanced error classification with transcription context
+            error_context = {
                 "job_id": job_id,
                 "video_url": video_url,
                 "current_stage": tracker.current_stage.value,
                 "stage_elapsed_time": (datetime.utcnow() - tracker.stage_start_time).total_seconds()
-            })
+            }
+
+            # Add transcription context if available
+            if transcription_config:
+                error_context.update({
+                    "transcription_method": transcription_config.get("method", "auto"),
+                    "gpu_enabled": transcription_config.get("enable_gpu", True),
+                    "cost_optimization": transcription_config.get("cost_optimization", True),
+                    "fallback_enabled": transcription_config.get("enable_fallback", True)
+                })
+
+            # Use specialized transcription error classification if in transcription stage
+            if tracker.current_stage == ProcessingStage.TRANSCRIBING and transcription_config:
+                error_info = error_classifier.classify_transcription_error(e, error_context)
+            else:
+                error_info = error_classifier.classify_error(e, error_context)
             
             # Update progress with failure
             await tracker.update_progress(
@@ -175,6 +198,11 @@ class EnhancedPipelineWrapper:
             
             # Re-raise with enhanced error info
             raise Exception(f"Pipeline failed: {error_info.error_message}") from e
+
+        finally:
+            # Restore original environment variables
+            if transcription_config and original_env:
+                self._restore_environment(original_env)
     
     async def run_raw_pipeline_with_tracking(
         self,
@@ -189,26 +217,22 @@ class EnhancedPipelineWrapper:
         
         try:
             await tracker.update_progress(ProcessingStage.DOWNLOADING, 0, "Starting raw pipeline...")
-            
-            # Import raw pipeline
-            from raw_pipeline.processor import RawPipelineProcessor
-            
-            processor = RawPipelineProcessor()
-            
+
+            # Import raw pipeline function
+            from raw_pipeline import process_raw_files
+
             # Create progress wrapper for raw pipeline
             async def raw_pipeline_execution():
-                return await asyncio.get_event_loop().run_in_executor(
-                    None, processor.process_video, video_url
-                )
-            
+                return await process_raw_files(video_url)
+
             # Execute with retry
             result = await retry_network_operation(
                 raw_pipeline_execution,
                 operation_name=f"raw_pipeline_{job_id}"
             )
-            
+
             await tracker.update_progress(ProcessingStage.TRANSCRIBING, 100, "Raw pipeline completed!")
-            
+
             return result
             
         except Exception as e:
@@ -229,26 +253,22 @@ class EnhancedPipelineWrapper:
         
         try:
             await tracker.update_progress(ProcessingStage.ANALYZING, 0, "Starting analysis pipeline...")
-            
-            # Import analysis pipeline
-            from analysis_pipeline.processor import AnalysisPipelineProcessor
-            
-            processor = AnalysisPipelineProcessor()
-            
+
+            # Import analysis pipeline function
+            from analysis_pipeline import process_analysis
+
             # Create progress wrapper
             async def analysis_pipeline_execution():
-                return await asyncio.get_event_loop().run_in_executor(
-                    None, processor.process_analysis, video_id
-                )
-            
+                return await process_analysis(video_id)
+
             # Execute with retry
             result = await retry_processing_operation(
                 analysis_pipeline_execution,
                 operation_name=f"analysis_pipeline_{job_id}"
             )
-            
+
             await tracker.update_progress(ProcessingStage.COMPLETED, 100, "Analysis pipeline completed!")
-            
+
             return result
             
         except Exception as e:
@@ -261,14 +281,72 @@ class EnhancedPipelineWrapper:
         descriptions = {
             ProcessingStage.QUEUED: "Your video has been queued for processing",
             ProcessingStage.DOWNLOADING: "Downloading video and extracting audio",
-            ProcessingStage.FETCHING_CHAT: "Downloading chat messages and metadata",
+            ProcessingStage.GENERATING_WAVEFORM: "Generating audio waveform visualization",
             ProcessingStage.TRANSCRIBING: "Generating transcript from audio using AI",
+            ProcessingStage.FETCHING_CHAT: "Downloading chat messages and metadata",
             ProcessingStage.ANALYZING: "Analyzing sentiment and content patterns",
             ProcessingStage.FINDING_HIGHLIGHTS: "Detecting highlights and key moments",
             ProcessingStage.COMPLETED: "Analysis completed successfully!",
             ProcessingStage.FAILED: "Analysis failed - please try again"
         }
         return descriptions.get(stage, f"Processing: {stage.value}")
+
+    def _apply_transcription_config(self, transcription_config: Dict) -> Dict[str, str]:
+        """
+        Apply transcription configuration by setting environment variables
+
+        Args:
+            transcription_config: Dictionary with transcription configuration
+
+        Returns:
+            Dictionary of original environment variable values for restoration
+        """
+        import os
+
+        original_env = {}
+
+        # Map API config to environment variables
+        env_mapping = {
+            'method': 'TRANSCRIPTION_METHOD',
+            'enable_gpu': 'ENABLE_GPU_TRANSCRIPTION',
+            'enable_fallback': 'ENABLE_FALLBACK',
+            'cost_optimization': 'COST_OPTIMIZATION'
+        }
+
+        for config_key, env_var in env_mapping.items():
+            if config_key in transcription_config:
+                # Store original value
+                original_env[env_var] = os.environ.get(env_var)
+
+                # Set new value
+                value = transcription_config[config_key]
+                if isinstance(value, bool):
+                    value = "true" if value else "false"
+                os.environ[env_var] = str(value)
+
+                logger.info(f"Set {env_var}={value}")
+
+        return original_env
+
+    def _restore_environment(self, original_env: Dict[str, str]) -> None:
+        """
+        Restore original environment variables
+
+        Args:
+            original_env: Dictionary of original environment variable values
+        """
+        import os
+
+        for env_var, original_value in original_env.items():
+            if original_value is None:
+                # Variable didn't exist originally, remove it
+                if env_var in os.environ:
+                    del os.environ[env_var]
+            else:
+                # Restore original value
+                os.environ[env_var] = original_value
+
+            logger.debug(f"Restored {env_var} to original value")
 
 
 # Global pipeline wrapper instance

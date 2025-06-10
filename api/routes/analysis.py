@@ -6,18 +6,21 @@ It provides endpoints for starting analysis jobs and managing the analysis workf
 """
 
 import uuid
+import json
 import logging
 from datetime import datetime, timedelta
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends
 from fastapi.responses import JSONResponse
 
 from ..models import (
-    AnalysisRequest, 
-    AnalysisResponse, 
-    ProcessingStage, 
+    AnalysisRequest,
+    AnalysisResponse,
+    ProcessingStage,
     ProgressInfo,
     ErrorType,
     ErrorInfo,
+    TranscriptionMethod,
+    TranscriptionConfig,
     ANALYSIS_START_RESPONSE_EXAMPLE,
     ANALYSIS_ERROR_RESPONSE_EXAMPLE
 )
@@ -87,6 +90,68 @@ async def test_endpoint():
     }
 
 
+@router.get(
+    "/transcription/methods",
+    summary="Get Available Transcription Methods",
+    description="Get information about available transcription methods and their capabilities"
+)
+async def get_transcription_methods():
+    """
+    Get available transcription methods and their capabilities
+
+    Returns information about supported transcription methods including:
+    - Method names and descriptions
+    - Cost estimates
+    - Performance characteristics
+    - GPU requirements
+    """
+    return {
+        "status": "success",
+        "message": "Available transcription methods",
+        "timestamp": datetime.utcnow().isoformat(),
+        "methods": {
+            "auto": {
+                "name": "Automatic Selection",
+                "description": "Automatically selects the best method based on file duration and cost optimization",
+                "cost_per_hour": "Variable (optimized)",
+                "gpu_required": False,
+                "recommended_for": "Most use cases - optimal cost/performance balance"
+            },
+            "parakeet": {
+                "name": "NVIDIA Parakeet GPU",
+                "description": "GPU-accelerated local transcription using NVIDIA Parakeet model",
+                "cost_per_hour": "$0.45 (GPU compute)",
+                "gpu_required": True,
+                "recommended_for": "Short to medium files (< 2 hours) when GPU is available"
+            },
+            "deepgram": {
+                "name": "Deepgram API",
+                "description": "Cloud-based transcription using Deepgram Nova-3 model",
+                "cost_per_hour": "$0.27 (API calls)",
+                "gpu_required": False,
+                "recommended_for": "Long files (> 4 hours) or when GPU is not available"
+            },
+            "hybrid": {
+                "name": "Hybrid Processing",
+                "description": "Combines Parakeet GPU for initial portion with Deepgram for remainder",
+                "cost_per_hour": "Variable (optimized split)",
+                "gpu_required": True,
+                "recommended_for": "Medium files (2-4 hours) for optimal cost/performance"
+            }
+        },
+        "configuration": {
+            "default_method": "auto",
+            "cost_optimization_enabled": True,
+            "gpu_fallback_enabled": True,
+            "estimated_processing_speed": {
+                "parakeet_gpu": "40x real-time",
+                "deepgram": "5-10x real-time",
+                "hybrid": "20-30x real-time"
+            }
+        }
+    }
+
+
 @router.post(
     "/analysis",
     response_model=AnalysisResponse,
@@ -120,57 +185,133 @@ async def start_analysis(
 ) -> AnalysisResponse:
     """
     Start video analysis with immediate response
-    
+
     This endpoint:
-    1. Validates the Twitch URL
-    2. Creates a unique job ID
-    3. Initializes the analysis job
-    4. Starts background processing
-    5. Returns immediate response with job details
-    
-    The actual processing happens in the background, and progress can be tracked
-    using the status endpoints.
+    1. Validates the Twitch URL and extracts video ID
+    2. Finds or creates video in Convex database
+    3. Adds job to Convex queue (not internal queue)
+    4. Returns immediate response with job details
+
+    The actual processing is handled by the Convex scheduler system.
     """
     try:
         # Validate URL and extract video ID
         video_id = validate_twitch_url(request.url)
-        
+
         # Generate unique job ID
         job_id = str(uuid.uuid4())
-        
+
         logger.info(f"Starting analysis for video {video_id} with job ID {job_id}")
-        
-        # Create analysis job
+
+        # Initialize Convex manager
+        from utils.convex_client_updated import ConvexManager
+        convex_manager = ConvexManager()
+
+        if not convex_manager.convex:
+            logger.error("Convex client not initialized")
+            raise HTTPException(
+                status_code=500,
+                detail="Database connection not available"
+            )
+
+        # Step 1: Find existing video in Convex
+        logger.info(f"Looking for existing video {video_id} in Convex...")
+        existing_video = convex_manager.convex.client.query("video:getAnyByTwitchId", {
+            "twitch_id": video_id
+        })
+
+        if existing_video:
+            logger.info(f"Found existing video: {existing_video['_id']}")
+            convex_video_id = existing_video['_id']
+            team_id = existing_video['team']
+        else:
+            # Step 2: Create video in Convex if it doesn't exist
+            logger.info(f"Video {video_id} not found, creating new entry...")
+
+            # Get video data from Twitch API via Convex
+            twitch_data = convex_manager.convex.client.action("action/twitch:testTwitchVodAction", {
+                "videoId": video_id
+            })
+
+            if not twitch_data or not twitch_data.get('success'):
+                logger.error(f"Failed to get Twitch data for video {video_id}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Video {video_id} not found on Twitch or not accessible"
+                )
+
+            vod_data = twitch_data['vod']
+
+            # Use default team ID from memories
+            default_team_id = "js7bj9zgdkyj9ykvr4m6jarxkh7ep9fa"
+
+            # Create video entry in Convex
+            video_data = {
+                "team": default_team_id,
+                "twitch_id": video_id,
+                "title": vod_data.get('title', f'Twitch VOD {video_id}'),
+                "thumbnail": vod_data.get('thumbnail_url', '').replace('%{width}', '290').replace('%{height}', '190'),
+                "thumbnail_id": "placeholder",  # Will be updated later
+                "duration": vod_data.get('duration', ''),
+                "user_name": vod_data.get('user_name', ''),
+                "created_at": vod_data.get('created_at', ''),
+                "published_at": vod_data.get('published_at', ''),
+                "language": vod_data.get('language', ''),
+                "view_count": str(vod_data.get('view_count', 0)),
+                "twitch_info": json.dumps(vod_data),
+                "status": "queued"
+            }
+
+            convex_video_id = convex_manager.convex.client.mutation("video:insert", video_data)
+            team_id = default_team_id
+            logger.info(f"Created new video entry: {convex_video_id}")
+
+        # Step 3: Add job to Convex queue
+        logger.info(f"Adding job {job_id} to Convex queue...")
+        queue_result = convex_manager.convex.client.mutation("queueManager:addVideoToQueue", {
+            "videoId": convex_video_id,
+            "teamId": team_id,
+            "jobId": job_id,
+            "priority": 0,
+            "callbackUrl": str(request.callback_url) if request.callback_url else None
+        })
+
+        if not queue_result.get('success'):
+            logger.error(f"Failed to add job to Convex queue: {queue_result}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to queue job: {queue_result.get('message', 'Unknown error')}"
+            )
+
+        logger.info(f"Successfully added job {job_id} to Convex queue at position {queue_result.get('queuePosition', 0)}")
+
+        # Create a minimal job entry for status tracking (but don't use internal processing)
         analysis_job = AnalysisJob(
             id=job_id,
             video_id=video_id,
             video_url=request.url,
             status=ProcessingStage.QUEUED,
             progress_percentage=0.0,
-            estimated_completion_seconds=3600,  # 1 hour default estimate
+            estimated_completion_seconds=queue_result.get('estimatedWaitTime', 3600) // 1000,  # Convert ms to seconds
             created_at=datetime.utcnow(),
-            callback_url=str(request.callback_url) if request.callback_url else None
+            callback_url=str(request.callback_url) if request.callback_url else None,
+            transcription_config=request.transcription_config
         )
-        
-        # Save job to manager (with error handling)
+
+        # Store job for status tracking only (no background processing)
         try:
             await job_manager.create_job(analysis_job)
-            logger.info(f"Job {job_id} created successfully")
+            logger.info(f"Job {job_id} created for status tracking")
         except Exception as e:
             logger.error(f"Failed to create job {job_id}: {str(e)}")
-            # Continue anyway for testing
-
-        # Start background processing (disabled for debugging)
-        logger.info(f"Background processing disabled for debugging - job {job_id} created but not started")
-        # TODO: Re-enable background processing once the hanging issue is resolved
-        # background_tasks.add_task(job_manager.process_video_analysis, analysis_job)
+            # Continue anyway since the job is in Convex queue
         
         # Create progress info
         progress = ProgressInfo(
             percentage=0.0,
             current_stage=ProcessingStage.QUEUED,
             stages_completed=0,
-            total_stages=5,  # Queued, Downloading, Transcribing, Analyzing, Completed
+            total_stages=7,  # Queued, Downloading, Generating Waveform, Transcribing, Fetching Chat, Analyzing, Finding Highlights, Completed
             estimated_completion_seconds=3600,
             estimated_completion_time=datetime.utcnow() + timedelta(seconds=3600),
             stage_progress={}
@@ -301,7 +442,7 @@ async def get_analysis(job_id: str) -> AnalysisResponse:
             percentage=job.progress_percentage,
             current_stage=job.status,
             stages_completed=job.stages_completed,
-            total_stages=5,
+            total_stages=7,
             estimated_completion_seconds=job.estimated_completion_seconds,
             estimated_completion_time=job.estimated_completion_time,
             stage_progress=job.stage_progress or {}

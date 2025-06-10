@@ -12,10 +12,11 @@ from typing import Dict, List, Optional, Callable
 from dataclasses import dataclass, field
 
 from ..models import (
-    ProcessingStage, 
-    ErrorType, 
-    ErrorInfo, 
-    AnalysisResults
+    ProcessingStage,
+    ErrorType,
+    ErrorInfo,
+    AnalysisResults,
+    TranscriptionConfig
 )
 
 # Set up logging
@@ -35,12 +36,13 @@ class AnalysisJob:
     estimated_completion_seconds: int
     created_at: datetime
     callback_url: Optional[str] = None
+    transcription_config: Optional[TranscriptionConfig] = None
 
     # Progress tracking
     current_message: Optional[str] = None
     last_updated: Optional[datetime] = None
     stages_completed: int = 0
-    total_stages: int = 5  # Total number of processing stages
+    total_stages: int = 7  # Total number of processing stages
     stage_progress: Optional[Dict[str, float]] = field(default_factory=dict)
     estimated_completion_time: Optional[datetime] = None
 
@@ -71,8 +73,11 @@ class AnalysisJob:
         stage_order = [
             ProcessingStage.QUEUED,
             ProcessingStage.DOWNLOADING,
+            ProcessingStage.GENERATING_WAVEFORM,
             ProcessingStage.TRANSCRIBING,
+            ProcessingStage.FETCHING_CHAT,
             ProcessingStage.ANALYZING,
+            ProcessingStage.FINDING_HIGHLIGHTS,
             ProcessingStage.COMPLETED
         ]
         
@@ -248,12 +253,31 @@ class JobManager:
                 # Add results if completed
                 if job.status == ProcessingStage.COMPLETED and job.results:
                     payload["results"] = {
-                        "video_file_url": job.results.video_file_url,
-                        "transcript_file_url": job.results.transcript_file_url,
-                        "highlights_file_url": job.results.highlights_file_url,
-                        "analysis_report_url": job.results.analysis_report_url,
+                        # Core file URLs (using exact Convex field names)
+                        "video_url": job.results.video_url,
+                        "audio_url": job.results.audio_url,
+                        "waveform_url": job.results.waveform_url,
+                        "transcript_url": job.results.transcript_url,
+                        "transcriptWords_url": job.results.transcriptWords_url,
+                        "chat_url": job.results.chat_url,
+                        "analysis_url": job.results.analysis_url,
+
+                        # Additional file URLs
+                        "highlights_url": job.results.highlights_url,
+                        "audio_sentiment_url": job.results.audio_sentiment_url,
+                        "chat_sentiment_url": job.results.chat_sentiment_url,
+
+                        # Statistics
                         "video_duration_seconds": job.results.video_duration_seconds,
-                        "processing_time_seconds": job.results.processing_time_seconds
+                        "transcript_word_count": job.results.transcript_word_count,
+                        "highlights_count": job.results.highlights_count,
+                        "sentiment_score": job.results.sentiment_score,
+                        "processing_time_seconds": job.results.processing_time_seconds,
+
+                        # Transcription metadata
+                        "transcription_method_used": job.results.transcription_method_used,
+                        "transcription_cost_estimate": job.results.transcription_cost_estimate,
+                        "gpu_used": job.results.gpu_used
                     }
 
                 # Add error info if failed
@@ -328,26 +352,26 @@ class JobManager:
             # Run the integrated pipeline with enhanced progress tracking
             from .pipeline_wrapper import pipeline_wrapper
 
+            # Convert transcription config to dict if present
+            transcription_config_dict = None
+            if job.transcription_config:
+                transcription_config_dict = {
+                    'method': job.transcription_config.method.value,
+                    'enable_gpu': job.transcription_config.enable_gpu,
+                    'enable_fallback': job.transcription_config.enable_fallback,
+                    'cost_optimization': job.transcription_config.cost_optimization
+                }
+
             result = await pipeline_wrapper.run_integrated_pipeline_with_tracking(
                 job.video_url,
                 job.id,
-                pipeline_progress_callback
+                pipeline_progress_callback,
+                transcription_config_dict
             )
             
             if result and result.get("status") == "completed":
-                # Create results object
-                analysis_results = AnalysisResults(
-                    video_file_url=result.get("files", {}).get("video_file", ""),
-                    transcript_file_url=result.get("files", {}).get("transcript_files", {}).get("json", ""),
-                    highlights_file_url=result.get("files", {}).get("analysis_files", {}).get("highlights", ""),
-                    analysis_report_url=result.get("files", {}).get("analysis_files", {}).get("integrated", ""),
-                    video_duration_seconds=result.get("video_duration", 0.0),
-                    transcript_word_count=result.get("transcript_word_count", 0),
-                    highlights_count=result.get("highlights_count", 0),
-                    sentiment_score=result.get("sentiment_score", 0.0),
-                    processing_time_seconds=result.get("total_duration", 0.0),
-                    file_sizes=result.get("file_sizes", {})
-                )
+                # Create results object with proper URL mapping
+                analysis_results = self._map_pipeline_results_to_api_format(result, job)
                 
                 # Mark job as completed
                 job.mark_completed(analysis_results)
@@ -404,6 +428,124 @@ class JobManager:
                 del self.progress_callbacks[job.id]
             
             logger.info(f"Background processing completed for job {job.id}")
+
+    def _map_pipeline_results_to_api_format(self, pipeline_result: Dict, job: AnalysisJob) -> AnalysisResults:
+        """
+        Map pipeline results to API AnalysisResults format
+
+        Args:
+            pipeline_result: Raw result from pipeline execution
+            job: The analysis job being processed
+
+        Returns:
+            AnalysisResults object with properly mapped URLs and metadata
+        """
+        try:
+            # Extract file information from pipeline result
+            files = pipeline_result.get("files", {})
+            uploaded_files = pipeline_result.get("uploaded_files", {})
+
+            # Helper function to get GCS URL from uploaded files
+            def get_gcs_url(file_key: str, fallback_key: str = None) -> Optional[str]:
+                # First try to get from uploaded_files (GCS URLs)
+                if uploaded_files:
+                    for uploaded_file in uploaded_files:
+                        if isinstance(uploaded_file, dict):
+                            file_path = uploaded_file.get("file_path", "")
+                            if file_key in file_path or (fallback_key and fallback_key in file_path):
+                                return uploaded_file.get("gcs_uri")
+
+                # Fallback to constructing URL from bucket structure
+                from utils.file_manager import FileManager
+                file_manager = FileManager(job.video_id)
+
+                # Map file keys to file manager types
+                file_type_mapping = {
+                    "video": "video",
+                    "audio": "audio",
+                    "waveform": "waveform",
+                    "segments": "segments",
+                    "words": "words",
+                    "paragraphs": "paragraphs",
+                    "chat": "chat",
+                    "audio_sentiment": "audio_sentiment",
+                    "chat_sentiment": "chat_sentiment",
+                    "highlights": "highlights",
+                    "integrated_analysis": "integrated_analysis"
+                }
+
+                file_type = file_type_mapping.get(file_key)
+                if file_type:
+                    bucket = file_manager.get_bucket_name(file_type)
+                    gcs_path = file_manager.get_gcs_path(file_type)
+                    if bucket and gcs_path:
+                        return f"gs://{bucket}/{gcs_path}"
+
+                return None
+
+            # Extract transcription metadata
+            transcription_metadata = pipeline_result.get("transcription_metadata", {})
+
+            # Create AnalysisResults with mapped URLs
+            analysis_results = AnalysisResults(
+                # Core file URLs (using exact Convex field names)
+                video_url=get_gcs_url("video"),
+                audio_url=get_gcs_url("audio"),
+                waveform_url=get_gcs_url("waveform"),
+                transcript_url=get_gcs_url("segments"),
+                transcriptWords_url=get_gcs_url("words"),
+                chat_url=get_gcs_url("chat"),
+                analysis_url=get_gcs_url("integrated_analysis"),
+
+                # Additional file URLs
+                highlights_url=get_gcs_url("highlights"),
+                audio_sentiment_url=get_gcs_url("audio_sentiment"),
+                chat_sentiment_url=get_gcs_url("chat_sentiment"),
+
+                # Summary statistics
+                video_duration_seconds=pipeline_result.get("video_duration", 0.0),
+                transcript_word_count=pipeline_result.get("transcript_word_count", 0),
+                highlights_count=pipeline_result.get("highlights_count", 0),
+                sentiment_score=pipeline_result.get("sentiment_score", 0.0),
+
+                # Processing statistics
+                processing_time_seconds=pipeline_result.get("total_duration", 0.0),
+                file_sizes=pipeline_result.get("file_sizes", {}),
+
+                # Transcription metadata
+                transcription_method_used=transcription_metadata.get("method_used"),
+                transcription_cost_estimate=transcription_metadata.get("cost_estimate"),
+                gpu_used=transcription_metadata.get("gpu_used", False)
+            )
+
+            logger.info(f"Successfully mapped pipeline results for job {job.id}")
+            return analysis_results
+
+        except Exception as e:
+            logger.error(f"Error mapping pipeline results for job {job.id}: {str(e)}")
+
+            # Return minimal results object on mapping failure
+            return AnalysisResults(
+                video_url=None,
+                audio_url=None,
+                waveform_url=None,
+                transcript_url=None,
+                transcriptWords_url=None,
+                chat_url=None,
+                analysis_url=None,
+                highlights_url=None,
+                audio_sentiment_url=None,
+                chat_sentiment_url=None,
+                video_duration_seconds=0.0,
+                transcript_word_count=0,
+                highlights_count=0,
+                sentiment_score=0.0,
+                processing_time_seconds=pipeline_result.get("total_duration", 0.0),
+                file_sizes={},
+                transcription_method_used=None,
+                transcription_cost_estimate=None,
+                gpu_used=False
+            )
 
 
 # Global job manager instance

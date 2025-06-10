@@ -132,6 +132,56 @@ class ErrorClassifier:
                 retry_after_seconds=180,
                 suggested_action="The transcription service is temporarily unavailable. Please try again in a few minutes."
             ),
+
+            # GPU and transcription specific errors
+            ErrorPattern(
+                pattern=r"(gpu.*memory.*error|cuda.*out.*of.*memory|gpu.*memory.*exceeded)",
+                error_type=ErrorType.INSUFFICIENT_RESOURCES,
+                error_code="GPU_MEMORY_ERROR",
+                is_retryable=True,
+                retry_after_seconds=300,
+                suggested_action="GPU memory exceeded. The system will automatically fallback to CPU transcription or try again later."
+            ),
+            ErrorPattern(
+                pattern=r"(model.*loading.*error|model.*not.*found|parakeet.*model.*error)",
+                error_type=ErrorType.EXTERNAL_SERVICE_ERROR,
+                error_code="MODEL_LOADING_ERROR",
+                is_retryable=True,
+                retry_after_seconds=180,
+                suggested_action="Failed to load transcription model. The system will fallback to alternative transcription methods."
+            ),
+            ErrorPattern(
+                pattern=r"(gpu.*not.*available|cuda.*not.*available|no.*gpu.*detected)",
+                error_type=ErrorType.INSUFFICIENT_RESOURCES,
+                error_code="GPU_NOT_AVAILABLE",
+                is_retryable=True,
+                retry_after_seconds=60,
+                suggested_action="GPU acceleration not available. The system will use CPU-based transcription instead."
+            ),
+            ErrorPattern(
+                pattern=r"(transcription.*fallback.*failed|all.*transcription.*methods.*failed)",
+                error_type=ErrorType.EXTERNAL_SERVICE_ERROR,
+                error_code="TRANSCRIPTION_FALLBACK_FAILED",
+                is_retryable=True,
+                retry_after_seconds=600,
+                suggested_action="All transcription methods failed. Please try again later or contact support."
+            ),
+            ErrorPattern(
+                pattern=r"(parakeet.*timeout|gpu.*transcription.*timeout|model.*inference.*timeout)",
+                error_type=ErrorType.PROCESSING_TIMEOUT,
+                error_code="TRANSCRIPTION_TIMEOUT",
+                is_retryable=True,
+                retry_after_seconds=300,
+                suggested_action="GPU transcription timed out. The system will fallback to faster transcription methods."
+            ),
+            ErrorPattern(
+                pattern=r"(hybrid.*processing.*error|transcription.*method.*selection.*failed)",
+                error_type=ErrorType.EXTERNAL_SERVICE_ERROR,
+                error_code="HYBRID_TRANSCRIPTION_ERROR",
+                is_retryable=True,
+                retry_after_seconds=180,
+                suggested_action="Hybrid transcription processing failed. The system will try alternative methods."
+            ),
             ErrorPattern(
                 pattern=r"(convex.*error|database.*error|db.*connection.*failed)",
                 error_type=ErrorType.EXTERNAL_SERVICE_ERROR,
@@ -323,7 +373,61 @@ class ErrorClassifier:
             )
         
         return None
-    
+
+    def classify_transcription_error(self, exception: Exception, transcription_context: Dict[str, Any]) -> ErrorInfo:
+        """
+        Specialized error classification for transcription-related errors
+
+        Args:
+            exception: The exception to classify
+            transcription_context: Context about transcription method, GPU usage, etc.
+
+        Returns:
+            ErrorInfo object with transcription-specific classification
+        """
+        error_message = str(exception)
+        method_used = transcription_context.get("method_used", "unknown")
+        gpu_available = transcription_context.get("gpu_available", False)
+        fallback_attempted = transcription_context.get("fallback_attempted", False)
+
+        # Enhanced context for transcription errors
+        enhanced_context = {
+            **transcription_context,
+            "transcription_method": method_used,
+            "gpu_available": gpu_available,
+            "fallback_attempted": fallback_attempted
+        }
+
+        # Check for specific transcription error patterns first
+        transcription_patterns = [
+            (r"(gpu.*memory|cuda.*memory)", "GPU_MEMORY_ERROR",
+             "GPU memory insufficient for transcription. Falling back to CPU or smaller batch size."),
+            (r"(model.*loading|model.*download)", "MODEL_LOADING_ERROR",
+             "Failed to load transcription model. Trying alternative transcription method."),
+            (r"(parakeet.*error|nemo.*error)", "PARAKEET_ERROR",
+             "GPU transcription model error. Falling back to cloud-based transcription."),
+            (r"(deepgram.*quota|deepgram.*limit)", "DEEPGRAM_QUOTA_ERROR",
+             "Deepgram API quota exceeded. Please try again later or contact support."),
+            (r"(hybrid.*split|hybrid.*merge)", "HYBRID_PROCESSING_ERROR",
+             "Hybrid transcription processing failed. Trying single-method transcription."),
+        ]
+
+        for pattern, error_code, suggested_action in transcription_patterns:
+            if re.search(pattern, error_message, re.IGNORECASE):
+                return ErrorInfo(
+                    error_type=ErrorType.EXTERNAL_SERVICE_ERROR,
+                    error_code=error_code,
+                    error_message=f"Transcription error with {method_used} method",
+                    error_details=f"{type(exception).__name__}: {error_message}\nContext: {enhanced_context}",
+                    is_retryable=True,
+                    retry_after_seconds=180,
+                    suggested_action=suggested_action,
+                    support_reference=self._generate_support_reference(error_code)
+                )
+
+        # Fall back to general classification with enhanced context
+        return self.classify_error(exception, enhanced_context)
+
     def _humanize_error_message(self, error_type: ErrorType, original_message: str) -> str:
         """Convert technical error messages to user-friendly messages"""
         

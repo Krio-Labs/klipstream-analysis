@@ -165,19 +165,52 @@ class TranscriptionRouter:
         return method
     
     def _is_gpu_available(self) -> bool:
-        """Check if GPU is available for transcription"""
+        """Check if GPU is available for transcription (NVIDIA CUDA or Apple Metal)"""
+
+        # Check for NVIDIA CUDA
         try:
             import torch
-            return torch.cuda.is_available()
+            if torch.cuda.is_available():
+                logger.info("NVIDIA CUDA GPU detected for transcription")
+                return True
+            else:
+                logger.debug("PyTorch available but CUDA not detected")
         except ImportError:
-            return False
+            logger.debug("PyTorch not available for CUDA detection")
+
+        # Check for Apple Silicon Metal Performance Shaders
+        try:
+            import platform
+            if platform.system() == "Darwin":  # macOS
+                import subprocess
+                result = subprocess.run(["system_profiler", "SPHardwareDataType"],
+                                      capture_output=True, text=True, timeout=10)
+                if result.returncode == 0:
+                    output = result.stdout
+                    if "Apple" in output and any(chip in output for chip in ["M1", "M2", "M3", "M4"]):
+                        logger.info("Apple Silicon Metal GPU detected for transcription")
+                        return True
+                    else:
+                        logger.debug(f"macOS detected but no Apple Silicon found in: {output[:200]}...")
+                else:
+                    logger.debug(f"system_profiler failed with return code: {result.returncode}")
+        except Exception as e:
+            logger.warning(f"Apple Silicon detection failed: {e}")
+
+        # Check environment variable override (for consistency with main.py)
+        if os.environ.get("TRANSCRIPTION_METHOD") == "parakeet":
+            logger.info("Parakeet transcription forced via environment variable")
+            return True
+
+        logger.warning("No GPU acceleration available for transcription - falling back to Deepgram")
+        return False
     
     async def _execute_transcription(self, method: str, audio_file_path: str, 
                                    video_id: str, output_dir: str, audio_info: Dict) -> Dict:
         """Execute transcription using selected method with fallback"""
         
         try:
-            if method == "parakeet":
+            if method in ["parakeet", "parakeet_gpu"]:
                 return await self._execute_parakeet_transcription(
                     audio_file_path, video_id, output_dir
                 )

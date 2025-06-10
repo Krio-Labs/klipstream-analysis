@@ -1,0 +1,78 @@
+# Fast deployment Dockerfile - minimal changes for API fix
+FROM python:3.10-slim
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install essential system dependencies only
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    git \
+    wget \
+    curl \
+    unzip \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Upgrade pip
+RUN python3 -m pip install --upgrade pip setuptools wheel
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install -r requirements.txt
+
+# Install minimal additional dependencies (skip heavy GPU stuff for now)
+RUN pip install \
+    librosa \
+    soundfile \
+    scipy \
+    scikit-learn
+
+# Copy TwitchDownloaderCLI binaries (essential for functionality)
+COPY raw_pipeline/bin/TwitchDownloaderCLI /app/raw_pipeline/bin/TwitchDownloaderCLI
+COPY raw_pipeline/bin/TwitchDownloaderCLI_mac /app/raw_pipeline/bin/TwitchDownloaderCLI_mac
+COPY raw_pipeline/bin/TwitchDownloaderCLI.exe /app/raw_pipeline/bin/TwitchDownloaderCLI.exe
+COPY raw_pipeline/bin/ffmpeg /app/raw_pipeline/bin/ffmpeg
+COPY raw_pipeline/bin/ffmpeg_mac /app/raw_pipeline/bin/ffmpeg_mac
+COPY raw_pipeline/bin/ffmpeg.exe /app/raw_pipeline/bin/ffmpeg.exe
+
+# Make binaries executable
+RUN chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI
+RUN chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI_mac
+RUN chmod +x /app/raw_pipeline/bin/ffmpeg
+RUN chmod +x /app/raw_pipeline/bin/ffmpeg_mac
+
+# Copy application code (this includes our fixed analysis.py)
+COPY . /app/
+
+# Basic environment variables
+ENV TRANSCRIPTION_METHOD=deepgram
+ENV ENABLE_FALLBACK=true
+ENV CLOUD_RUN_TIMEOUT_SECONDS=3600
+
+# Create necessary directories
+RUN mkdir -p /app/output/raw /app/output/analysis /app/output/transcripts
+RUN mkdir -p /tmp/chunks
+
+# Copy health check script
+COPY health_check.py /app/health_check.py
+RUN chmod +x /app/health_check.py
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python3 /app/health_check.py || exit 1
+
+# Expose port
+EXPOSE 8080
+
+# Set user (Cloud Run requirement)
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
+# Start FastAPI server
+CMD ["python3", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
