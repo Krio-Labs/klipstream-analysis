@@ -171,14 +171,29 @@ def configure_transcription_environment():
         "PARAKEET_MODEL_NAME": os.environ.get("PARAKEET_MODEL_NAME", "nvidia/parakeet-tdt-0.6b-v2")
     }
 
+    # Enhanced GPU optimization configuration
+    enhanced_gpu_config = {
+        "ENABLE_ENHANCED_GPU_OPTIMIZATION": os.environ.get("ENABLE_ENHANCED_GPU_OPTIMIZATION", "true"),
+        "ENABLE_AMP": os.environ.get("ENABLE_AMP", "true"),
+        "ENABLE_MEMORY_OPTIMIZATION": os.environ.get("ENABLE_MEMORY_OPTIMIZATION", "true"),
+        "ENABLE_PARALLEL_CHUNKING": os.environ.get("ENABLE_PARALLEL_CHUNKING", "true"),
+        "ENABLE_DEVICE_OPTIMIZATION": os.environ.get("ENABLE_DEVICE_OPTIMIZATION", "true"),
+        "ENABLE_PERFORMANCE_MONITORING": os.environ.get("ENABLE_PERFORMANCE_MONITORING", "true"),
+        "MEMORY_CLEANUP_THRESHOLD": os.environ.get("MEMORY_CLEANUP_THRESHOLD", "0.8"),
+        "MAX_MEMORY_FRAGMENTATION": os.environ.get("MAX_MEMORY_FRAGMENTATION", "0.3"),
+        "MAX_CHUNK_WORKERS": os.environ.get("MAX_CHUNK_WORKERS", "8"),
+        "CUDA_TF32": os.environ.get("CUDA_TF32", "true"),
+        "SAVE_PERFORMANCE_METRICS": os.environ.get("SAVE_PERFORMANCE_METRICS", "true")
+    }
+
     # Auto-configure based on detected hardware
     if transcription_config["TRANSCRIPTION_METHOD"] == "auto":
         if gpu_info["nvidia_cuda_available"] and gpu_info["gpu_memory_gb"] >= 4:
-            transcription_config["TRANSCRIPTION_METHOD"] = "parakeet"
-            logger.info("Auto-configured for NVIDIA Parakeet GPU transcription")
+            transcription_config["TRANSCRIPTION_METHOD"] = "parakeet_enhanced"
+            logger.info("Auto-configured for Enhanced NVIDIA Parakeet GPU transcription")
         elif gpu_info["apple_metal_available"]:
-            transcription_config["TRANSCRIPTION_METHOD"] = "parakeet"
-            logger.info("Auto-configured for Apple Silicon Parakeet transcription")
+            transcription_config["TRANSCRIPTION_METHOD"] = "parakeet_enhanced"
+            logger.info("Auto-configured for Enhanced Apple Silicon Parakeet transcription")
         else:
             transcription_config["TRANSCRIPTION_METHOD"] = "deepgram"
             logger.info("Auto-configured for Deepgram cloud transcription")
@@ -187,6 +202,18 @@ def configure_transcription_environment():
     for key, value in transcription_config.items():
         os.environ[key] = str(value)
         logger.debug(f"Set {key}={value}")
+
+    for key, value in enhanced_gpu_config.items():
+        os.environ[key] = str(value)
+        logger.debug(f"Set {key}={value}")
+
+    # Log enhanced GPU optimization status
+    if enhanced_gpu_config["ENABLE_ENHANCED_GPU_OPTIMIZATION"] == "true":
+        logger.info("🚀 Enhanced GPU optimization enabled")
+        logger.info(f"   AMP: {enhanced_gpu_config['ENABLE_AMP']}")
+        logger.info(f"   Memory optimization: {enhanced_gpu_config['ENABLE_MEMORY_OPTIMIZATION']}")
+        logger.info(f"   Parallel chunking: {enhanced_gpu_config['ENABLE_PARALLEL_CHUNKING']}")
+        logger.info(f"   Performance monitoring: {enhanced_gpu_config['ENABLE_PERFORMANCE_MONITORING']}")
 
     return transcription_config, gpu_info
 
@@ -620,6 +647,92 @@ def list_output_files(request):
     # Convert Path objects to strings for JSON serialization
     serializable_files = convert_paths_to_strings(files)
     return {"output_files": serializable_files}
+
+@functions_framework.http
+def health_check(request):
+    """Health check endpoint with enhanced GPU optimization status"""
+    gpu_info = detect_gpu_capabilities()
+
+    return {
+        "status": "healthy",
+        "timestamp": time.time(),
+        "version": "2.0.0",
+        "gpu_available": gpu_info["nvidia_cuda_available"] or gpu_info["apple_metal_available"],
+        "enhanced_gpu_optimization": os.environ.get("ENABLE_ENHANCED_GPU_OPTIMIZATION", "true").lower() == "true",
+        "gpu_info": gpu_info,
+        "transcription_method": os.environ.get("TRANSCRIPTION_METHOD", "auto"),
+        "optimization_features": {
+            "amp_enabled": os.environ.get("ENABLE_AMP", "true").lower() == "true",
+            "memory_optimization": os.environ.get("ENABLE_MEMORY_OPTIMIZATION", "true").lower() == "true",
+            "parallel_chunking": os.environ.get("ENABLE_PARALLEL_CHUNKING", "true").lower() == "true",
+            "device_optimization": os.environ.get("ENABLE_DEVICE_OPTIMIZATION", "true").lower() == "true",
+            "performance_monitoring": os.environ.get("ENABLE_PERFORMANCE_MONITORING", "true").lower() == "true"
+        }
+    }
+
+@functions_framework.http
+def optimization_status(request):
+    """Get detailed optimization status and capabilities"""
+    try:
+        # Import enhanced transcriber to get status
+        from raw_pipeline.transcription.handlers.enhanced_parakeet_gpu import (
+            EnhancedGPUOptimizedParakeetTranscriber, GPUOptimizationConfig
+        )
+
+        config = GPUOptimizationConfig()
+        transcriber = EnhancedGPUOptimizedParakeetTranscriber(config=config)
+        status = transcriber.get_optimization_status()
+        transcriber.cleanup_gpu_resources()
+
+        return {
+            "status": "success",
+            "optimization_status": status,
+            "timestamp": time.time()
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": time.time()
+        }
+
+@functions_framework.http
+def performance_metrics(request):
+    """Get performance metrics from recent transcriptions"""
+    try:
+        import json
+        from pathlib import Path
+
+        metrics_file = Path("/tmp/transcription_performance_metrics.json")
+
+        if metrics_file.exists():
+            with open(metrics_file, 'r') as f:
+                metrics = json.load(f)
+
+            # Return last 10 entries
+            recent_metrics = metrics[-10:] if len(metrics) > 10 else metrics
+
+            return {
+                "status": "success",
+                "metrics": recent_metrics,
+                "total_entries": len(metrics),
+                "timestamp": time.time()
+            }
+        else:
+            return {
+                "status": "success",
+                "metrics": [],
+                "message": "No performance metrics available yet",
+                "timestamp": time.time()
+            }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": time.time()
+        }
 
 if __name__ == "__main__":
     # Filter resource tracker warnings

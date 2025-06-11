@@ -88,7 +88,7 @@ class TranscriptionConfig:
         issues = []
         
         # Validate method selection
-        valid_methods = ["auto", "parakeet", "deepgram", "hybrid"]
+        valid_methods = ["auto", "parakeet", "parakeet_enhanced", "deepgram", "hybrid"]
         if self.transcription_method not in valid_methods:
             issues.append(f"Invalid transcription_method: {self.transcription_method}")
         
@@ -128,9 +128,12 @@ class TranscriptionConfig:
             else:
                 return "deepgram"  # Reliable for long files
         
-        # GPU available
+        # GPU available - prefer enhanced version if enabled
+        enhanced_enabled = os.getenv("ENABLE_ENHANCED_GPU_OPTIMIZATION", "true").lower() == "true"
+        parakeet_method = "parakeet_enhanced" if enhanced_enabled else "parakeet"
+
         if duration_hours < self.short_file_threshold_hours:
-            return "parakeet"
+            return parakeet_method
         elif duration_hours < self.long_file_threshold_hours:
             return "hybrid"
         else:

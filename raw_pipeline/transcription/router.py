@@ -63,11 +63,27 @@ class TranscriptionRouter:
         """Lazy load Parakeet handler to avoid import issues when GPU not available"""
         if self.parakeet_handler is None:
             try:
-                from .handlers.parakeet_gpu import ParakeetGPUHandler
-                self.parakeet_handler = ParakeetGPUHandler()
-                logger.info("Parakeet GPU handler loaded successfully")
+                # Check if enhanced GPU optimization is enabled
+                use_enhanced = os.environ.get("ENABLE_ENHANCED_GPU_OPTIMIZATION", "true").lower() == "true"
+
+                if use_enhanced:
+                    try:
+                        from .handlers.enhanced_parakeet_gpu import EnhancedParakeetGPUHandler
+                        self.parakeet_handler = EnhancedParakeetGPUHandler()
+                        logger.info("Enhanced Parakeet GPU handler loaded successfully")
+                    except Exception as enhanced_error:
+                        logger.warning(f"Enhanced Parakeet GPU handler failed: {enhanced_error}")
+                        logger.info("Falling back to standard Parakeet GPU handler")
+                        from .handlers.parakeet_gpu import ParakeetGPUHandler
+                        self.parakeet_handler = ParakeetGPUHandler()
+                        logger.info("Standard Parakeet GPU handler loaded successfully")
+                else:
+                    from .handlers.parakeet_gpu import ParakeetGPUHandler
+                    self.parakeet_handler = ParakeetGPUHandler()
+                    logger.info("Standard Parakeet GPU handler loaded successfully")
+
             except Exception as e:
-                logger.warning(f"Failed to load Parakeet GPU handler: {e}")
+                logger.warning(f"Failed to load any Parakeet GPU handler: {e}")
                 self.parakeet_handler = False  # Mark as failed
         return self.parakeet_handler if self.parakeet_handler is not False else None
     
@@ -158,10 +174,10 @@ class TranscriptionRouter:
                 method = optimal_method
         
         # Final validation
-        if method == "parakeet" and not gpu_available:
+        if method in ["parakeet", "parakeet_enhanced"] and not gpu_available:
             logger.warning("Parakeet selected but GPU unavailable, falling back to Deepgram")
             method = "deepgram"
-        
+
         return method
     
     def _is_gpu_available(self) -> bool:
@@ -210,7 +226,7 @@ class TranscriptionRouter:
         """Execute transcription using selected method with fallback"""
         
         try:
-            if method in ["parakeet", "parakeet_gpu"]:
+            if method in ["parakeet", "parakeet_gpu", "parakeet_enhanced"]:
                 return await self._execute_parakeet_transcription(
                     audio_file_path, video_id, output_dir
                 )
@@ -224,7 +240,7 @@ class TranscriptionRouter:
                 )
             else:
                 raise ValueError(f"Unknown transcription method: {method}")
-                
+
         except Exception as e:
             logger.error(f"Transcription method {method} failed: {e}")
             
