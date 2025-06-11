@@ -245,32 +245,49 @@ def upload_to_gcs(video_id, files):
 
         logger.info(f"Successfully uploaded {len(uploaded_files)} raw files to GCS")
 
-        # After uploading files, update Convex with URLs
+        # After uploading files, update Convex with URLs using CORRECT field names
         url_updates = {}
 
-        # Check for transcript segments file
+        # Check for video file (MP4)
+        video_result = next((r for r in uploaded_files if r["file_path"].endswith(".mp4")), None)
+        if video_result:
+            url_updates["video_url"] = video_result["gcs_uri"]
+
+        # Check for audio file (MP3)
+        audio_result = next((r for r in uploaded_files if r["file_path"].endswith(".mp3")), None)
+        if audio_result:
+            url_updates["audio_url"] = audio_result["gcs_uri"]
+
+        # Check for transcript segments file (CSV)
         transcript_segments_result = next((r for r in uploaded_files if "segments.csv" in r["file_path"]), None)
         if transcript_segments_result:
-            url_updates["transcriptUrl"] = transcript_segments_result["gcs_uri"]
+            url_updates["transcript_url"] = transcript_segments_result["gcs_uri"]
 
-        # Check for transcript words file
+        # Check for transcript words file (CSV)
         transcript_words_result = next((r for r in uploaded_files if "words.csv" in r["file_path"]), None)
         if transcript_words_result:
-            url_updates["transcriptWordUrl"] = transcript_words_result["gcs_uri"]
+            url_updates["transcriptWords_url"] = transcript_words_result["gcs_uri"]
 
-        # Check for chat file
+        # Check for chat file (CSV)
         chat_result = next((r for r in uploaded_files if "_chat.csv" in r["file_path"]), None)
         if chat_result:
-            url_updates["chatUrl"] = chat_result["gcs_uri"]
+            url_updates["chat_url"] = chat_result["gcs_uri"]
 
-        # Check for waveform file
+        # Check for waveform file (JSON)
         waveform_result = next((r for r in uploaded_files if "waveform.json" in r["file_path"]), None)
         if waveform_result:
-            url_updates["audiowaveUrl"] = waveform_result["gcs_uri"]
+            url_updates["waveform_url"] = waveform_result["gcs_uri"]
 
         # Update Convex if we have any URLs to update
         if url_updates:
-            convex_manager.update_video_urls(video_id, url_updates)
+            logger.info(f"Updating Convex with {len(url_updates)} URLs: {list(url_updates.keys())}")
+            success = convex_manager.update_video_urls(video_id, url_updates)
+            if success:
+                logger.info("✅ Successfully updated Convex with raw pipeline URLs")
+            else:
+                logger.warning("⚠️ Failed to update Convex with raw pipeline URLs")
+        else:
+            logger.info("No URLs to update in Convex from raw pipeline")
 
         return uploaded_files
     except Exception as e:
