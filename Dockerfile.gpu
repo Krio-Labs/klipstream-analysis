@@ -20,36 +20,20 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip
 RUN python3 -m pip install --upgrade pip setuptools wheel
 
-# Install PyTorch with CUDA support
-RUN pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 torchaudio==2.0.2+cu118 \
-    --index-url https://download.pytorch.org/whl/cu118
-
-# Install Cython first (required for NeMo dependencies)
-RUN pip install Cython
-
-# Install NeMo with ASR support
-RUN pip install nemo_toolkit[asr]==1.20.0
-
 # Set working directory
 WORKDIR /app
 
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies
+# Install all Python dependencies in one optimized step to avoid conflicts
+# This includes PyTorch, NeMo, and all other dependencies with compatible versions
 RUN pip install -r requirements.txt
 
-# Install additional GPU-specific dependencies
+# Install additional GPU monitoring tools (compatible with main requirements)
 RUN pip install \
     nvidia-ml-py3 \
-    pynvml \
-    accelerate \
-    transformers \
-    datasets \
-    librosa \
-    soundfile \
-    scipy \
-    scikit-learn
+    pynvml
 
 # Copy TwitchDownloaderCLI binaries from raw_pipeline/bin
 COPY raw_pipeline/bin/TwitchDownloaderCLI /app/raw_pipeline/bin/TwitchDownloaderCLI

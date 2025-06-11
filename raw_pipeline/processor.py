@@ -67,11 +67,9 @@ async def process_raw_files(url):
         # Extract video ID from URL
         video_id = extract_video_id(url)
 
-        # Update Convex status to "Downloading" immediately before download starts
-        convex_manager.update_video_status(video_id, STATUS_DOWNLOADING)
-        logger.info("📹 Downloading video...")
-
         # Download video first (includes audio conversion)
+        # Note: Convex status is updated to "Downloading" inside the downloader
+        logger.info("📹 Downloading video...")
         downloader = TwitchVideoDownloader()
         download_result = await downloader.process_video(url)
         logger.info("✅ Video download completed")
@@ -84,7 +82,10 @@ async def process_raw_files(url):
         }
 
         # Update Convex status to "Generating waveform" before waveform generation
-        convex_manager.update_video_status(video_id, STATUS_GENERATING_WAVEFORM)
+        print(f"📊 Updating status to 'Generating waveform' for video {video_id}...", flush=True)
+        success = convex_manager.update_video_status(video_id, STATUS_GENERATING_WAVEFORM)
+        if success:
+            print(f"✅ Status updated to 'Generating waveform'", flush=True)
         logger.info("🌊 Generating waveform...")
         waveform_result = generate_waveform(
             video_id,
@@ -94,7 +95,10 @@ async def process_raw_files(url):
         logger.info("✅ Waveform generation completed")
 
         # Update Convex status to "Transcribing"
-        convex_manager.update_video_status(video_id, STATUS_TRANSCRIBING)
+        print(f"📊 Updating status to 'Transcribing' for video {video_id}...", flush=True)
+        success = convex_manager.update_video_status(video_id, STATUS_TRANSCRIBING)
+        if success:
+            print(f"✅ Status updated to 'Transcribing'", flush=True)
         logger.info("🎤 Generating transcript...")
 
         # Generate transcript using new intelligent transcription router
@@ -150,7 +154,10 @@ async def process_raw_files(url):
         sliding_window_result = generate_sliding_windows(video_id)
 
         # Then download chat (last step)
-        convex_manager.update_video_status(video_id, STATUS_FETCHING_CHAT)
+        print(f"📊 Updating status to 'Fetching chat' for video {video_id}...", flush=True)
+        success = convex_manager.update_video_status(video_id, STATUS_FETCHING_CHAT)
+        if success:
+            print(f"✅ Status updated to 'Fetching chat'", flush=True)
         logger.info("💬 Downloading chat...")
         chat_result = download_chat_data(video_id)
         logger.info("✅ Chat download completed")
@@ -176,9 +183,6 @@ async def process_raw_files(url):
                 else:
                     logger.warning(f"Segments file not found after generation")
 
-        # Update Convex status before uploading files
-        convex_manager.update_video_status(video_id, "Uploading files")
-
         # Upload files to GCS
         uploaded_files = upload_to_gcs(video_id, files)
 
@@ -188,9 +192,7 @@ async def process_raw_files(url):
         # Clean up temporary directories
         cleanup_temp_directories()
 
-        # Update Convex status to indicate Stage 1 completion (not final completion)
-        convex_manager.update_video_status(video_id, "Processing complete")
-        logger.info("✅ Pipeline completed successfully")
+        logger.info("✅ Raw pipeline completed successfully")
 
         # Convert Path objects to strings for JSON serialization
         from main import convert_paths_to_strings

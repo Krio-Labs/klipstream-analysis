@@ -11,6 +11,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 from dotenv import load_dotenv
 
 # Import routes
@@ -125,6 +127,57 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    """
+    Handle FastAPI request validation errors with detailed information
+    """
+    logger.error(f"Request validation error for {request.method} {request.url}: {str(exc)}")
+    try:
+        body = await request.body()
+        logger.error(f"Request body: {body.decode('utf-8') if body else 'Empty'}")
+    except Exception as e:
+        logger.error(f"Could not read request body: {str(e)}")
+
+    return JSONResponse(
+        status_code=422,
+        content={
+            "status": "validation_error",
+            "message": "Request validation failed",
+            "errors": exc.errors(),
+            "timestamp": "2024-01-15T10:30:00Z",
+            "request_info": {
+                "method": request.method,
+                "url": str(request.url),
+                "headers": dict(request.headers)
+            }
+        }
+    )
+
+
+@app.exception_handler(ValidationError)
+async def validation_exception_handler(request: Request, exc: ValidationError):
+    """
+    Handle Pydantic validation errors with detailed information
+    """
+    logger.error(f"Pydantic validation error for {request.method} {request.url}: {str(exc)}")
+    try:
+        body = await request.body()
+        logger.error(f"Request body: {body.decode('utf-8') if body else 'Empty'}")
+    except Exception as e:
+        logger.error(f"Could not read request body: {str(e)}")
+
+    return JSONResponse(
+        status_code=422,
+        content={
+            "status": "validation_error",
+            "message": "Pydantic validation failed",
+            "errors": exc.errors(),
+            "timestamp": "2024-01-15T10:30:00Z"
+        }
+    )
 
 
 @app.exception_handler(Exception)

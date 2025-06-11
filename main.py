@@ -286,7 +286,12 @@ async def run_integrated_pipeline(url):
         file_manager = FileManager(video_id)
 
         # Update Convex status to "Queued"
-        convex_manager.update_video_status(video_id, STATUS_QUEUED)
+        print(f"📊 Updating status to 'Queued' for video {video_id}...", flush=True)
+        success = convex_manager.update_video_status(video_id, STATUS_QUEUED)
+        if success:
+            print(f"✅ Status updated to 'Queued'", flush=True)
+        else:
+            print(f"⚠️  Status update failed", flush=True)
 
         # Create required directories
         output_dir = BASE_DIR / "output"
@@ -327,6 +332,15 @@ async def run_integrated_pipeline(url):
 
         # STAGE 2: Analysis Pipeline
         logger.info("🔍 Stage 2: Analyzing content...")
+
+        # Update Convex status before starting analysis
+        print(f"📊 Updating status to 'Analyzing' for video {video_id}...", flush=True)
+        success = convex_manager.update_video_status(video_id, STATUS_ANALYZING)
+        if success:
+            print(f"✅ Status updated to 'Analyzing'", flush=True)
+        else:
+            print(f"⚠️  Status update failed", flush=True)
+
         analysis_start = time.time()
 
         try:
@@ -372,7 +386,13 @@ async def run_integrated_pipeline(url):
         logger.info(f"   Total: {total_duration:.1f}s")
 
         # Update Convex status to "Completed"
-        convex_manager.update_video_status(video_id, STATUS_COMPLETED)
+        print(f"📊 Updating status to 'Completed' for video {video_id}...", flush=True)
+        success = convex_manager.update_video_status(video_id, STATUS_COMPLETED)
+        if success:
+            print(f"✅ Status updated to 'Completed'", flush=True)
+        else:
+            print(f"⚠️  Status update failed", flush=True)
+        logger.info(f"📊 Updated Convex status to '{STATUS_COMPLETED}' for video ID: {video_id}")
 
         # Prepare final result with transcription metadata
         result = {

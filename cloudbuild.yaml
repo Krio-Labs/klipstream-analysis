@@ -1,5 +1,74 @@
+# Optimized Cloud Build configuration with caching
 steps:
-- name: 'gcr.io/cloud-builders/docker'
-  args: ['build', '-f', 'Dockerfile.gpu', '-t', 'gcr.io/klipstream/klipstream-analysis', '.']
+  # Step 1: Pull previous image for layer caching
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        docker pull gcr.io/klipstream/klipstream-analysis:latest || echo "No previous image found"
+        docker pull gcr.io/klipstream/klipstream-analysis:builder || echo "No previous builder image found"
+
+  # Step 2: Build with cache optimization
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--target=builder'
+      - '--cache-from=gcr.io/klipstream/klipstream-analysis:builder'
+      - '--tag=gcr.io/klipstream/klipstream-analysis:builder'
+      - '--file=Dockerfile.optimized'
+      - '.'
+
+  # Step 3: Build final runtime image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--cache-from=gcr.io/klipstream/klipstream-analysis:builder'
+      - '--cache-from=gcr.io/klipstream/klipstream-analysis:latest'
+      - '--tag=gcr.io/klipstream/klipstream-analysis:latest'
+      - '--tag=gcr.io/klipstream/klipstream-analysis:$BUILD_ID'
+      - '--file=Dockerfile.optimized'
+      - '.'
+
+  # Step 4: Push builder image for future caching
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/klipstream/klipstream-analysis:builder']
+
+  # Step 5: Push final images
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/klipstream/klipstream-analysis:latest']
+
+  # Step 6: Deploy to Cloud Run
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'klipstream-analysis'
+      - '--image=gcr.io/klipstream/klipstream-analysis:latest'
+      - '--platform=managed'
+      - '--region=us-central1'
+      - '--gpu=1'
+      - '--gpu-type=nvidia-l4'
+      - '--cpu=8'
+      - '--memory=32Gi'
+      - '--timeout=3600s'
+      - '--allow-unauthenticated'
+      - '--max-instances=3'
+      - '--min-instances=0'
+      - '--concurrency=1'
+      - '--port=8080'
+      - '--execution-environment=gen2'
+      - '--set-env-vars=ENABLE_GPU_TRANSCRIPTION=true,PARAKEET_MODEL_NAME=nvidia/parakeet-tdt-0.6b-v2,GPU_BATCH_SIZE=8'
+
+# Use high-performance machine for faster builds
+options:
+  machineType: 'E2_HIGHCPU_32'
+  diskSizeGb: 100
+  logging: CLOUD_LOGGING_ONLY
+
+# Cache configuration
+timeout: '1800s'  # 30 minutes max
+
 images:
-- 'gcr.io/klipstream/klipstream-analysis'
+- 'gcr.io/klipstream/klipstream-analysis:latest'
+- 'gcr.io/klipstream/klipstream-analysis:builder'

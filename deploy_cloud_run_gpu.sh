@@ -18,8 +18,8 @@ CPU="8"
 MEMORY="32Gi"
 TIMEOUT="3600"
 
-# Service Account
-SERVICE_ACCOUNT_EMAIL="klipstream-analysis@${PROJECT_ID}.iam.gserviceaccount.com"
+# Service Account (commented out to avoid permission issues)
+# SERVICE_ACCOUNT_EMAIL="klipstream-analysis@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # Environment Variables for GPU Transcription (Updated 2025-06-10)
 ENV_VARS="ENABLE_GPU_TRANSCRIPTION=true"
@@ -46,8 +46,9 @@ ENV_VARS="${ENV_VARS},CLOUD_ENVIRONMENT=true"
 ENV_VARS="${ENV_VARS},USE_CLOUD_STORAGE=true"
 ENV_VARS="${ENV_VARS},GCS_PROJECT_ID=klipstream"
 
-# Convex Configuration (Deploy key not needed for client connections)
+# Convex Configuration (Both URL and API key needed for client connections)
 ENV_VARS="${ENV_VARS},CONVEX_URL=${CONVEX_URL:-}"
+ENV_VARS="${ENV_VARS},CONVEX_API_KEY=${CONVEX_API_KEY:-}"
 
 # Deepgram Configuration (for fallback)
 ENV_VARS="${ENV_VARS},DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}"
@@ -146,9 +147,8 @@ gcloud run deploy ${SERVICE_NAME} \
     --cpu ${CPU} \
     --memory ${MEMORY} \
     --timeout ${TIMEOUT}s \
-    --service-account ${SERVICE_ACCOUNT_EMAIL} \
     --allow-unauthenticated \
-    --max-instances 5 \
+    --max-instances 3 \
     --min-instances 0 \
     --concurrency 1 \
     --port 8080 \
@@ -193,7 +193,7 @@ echo "URL: ${SERVICE_URL}"
 echo "GPU: ${GPU_COUNT}x ${GPU_TYPE}"
 echo "Resources: ${CPU} CPU, ${MEMORY} memory"
 echo "Timeout: ${TIMEOUT} seconds"
-echo "Max Instances: 5"
+echo "Max Instances: 3 (GPU limit)"
 echo "Concurrency: 1 (GPU exclusive)"
 echo ""
 

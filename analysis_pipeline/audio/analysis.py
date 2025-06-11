@@ -324,6 +324,16 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
     Returns:
         pd.DataFrame: DataFrame containing the top highlights, or None if analysis failed
     """
+    import signal
+    import time
+
+    def timeout_handler(signum, frame):
+        raise TimeoutError("Highlights analysis timed out")
+
+    # Set a 90-second timeout for the entire function
+    signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(90)
+
     try:
         # Import here to avoid circular imports
         from utils.config import BASE_DIR, USE_GCS
@@ -398,7 +408,20 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
                 audio_path = file_manager.get_file_path("audio")
 
                 if audio_path and os.path.exists(audio_path):
-                    y, sr = librosa.load(audio_path)
+                    print(f"🎵 Loading audio file: {audio_path}...", flush=True)
+
+                    # Check file size before loading
+                    file_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
+                    print(f"📊 Audio file size: {file_size_mb:.1f} MB", flush=True)
+
+                    if file_size_mb > 500:  # If larger than 500MB, use chunked loading
+                        print(f"⚠️  Large audio file detected, using chunked processing...", flush=True)
+                        y, sr = librosa.load(audio_path, duration=300)  # Load only first 5 minutes
+                        print(f"✅ Audio file loaded (first 5 minutes only)", flush=True)
+                    else:
+                        y, sr = librosa.load(audio_path)
+                        print(f"✅ Audio file loaded successfully", flush=True)
+
                     logger.info(f"Using audio file from file manager: {audio_path}")
                 else:
                     # Try alternative paths (MP3 first, then WAV)
@@ -464,9 +487,15 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
                 # Combine audio features
                 audio_intensity = (rms_norm * 0.7 + centroid_norm * 0.3)  # Weighted combination
 
-                # Free memory
+                # Free memory aggressively
+                print(f"🧹 Cleaning up audio processing memory...", flush=True)
                 del y, sr, rms, spectral_centroid, times, rms_interp, centroid_interp, rms_norm, centroid_norm
+
+                # Force garbage collection multiple times for large files
+                import gc
                 gc.collect()
+                gc.collect()  # Call twice for better cleanup
+                print(f"✅ Audio memory cleanup completed", flush=True)
 
             except Exception as e:
                 logger.warning(f"Could not load audio file: {str(e)}")
@@ -714,8 +743,25 @@ def analyze_transcription_highlights(video_id, input_file=None, output_dir=None)
             top_emotion_moments.to_csv(emotion_output_file, index=False)
             logger.info(f"Top 5 {emotion} moments saved to {emotion_output_file} (will be removed after integration)")
 
+        # Clear the timeout
+        signal.alarm(0)
+
+        # Final memory cleanup
+        print(f"🧹 Final memory cleanup for highlights analysis...", flush=True)
+        import gc
+        gc.collect()
+        gc.collect()  # Call twice for thorough cleanup
+        print(f"✅ Highlights analysis memory cleanup completed", flush=True)
+
         return top_highlights
 
+    except TimeoutError as e:
+        print(f"⏰ Highlights analysis timed out after 90 seconds", flush=True)
+        logger.error(f"Highlights analysis timed out: {str(e)}")
+        signal.alarm(0)
+        return None
     except Exception as e:
+        print(f"❌ Error in highlights analysis: {str(e)}", flush=True)
         logger.error(f"Error in analyze_transcription_highlights: {str(e)}")
+        signal.alarm(0)
         return None

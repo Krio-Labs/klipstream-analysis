@@ -1,0 +1,10 @@
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-f', 'Dockerfile.base', '-t', '${_IMAGE_NAME}', '.']
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', '${_IMAGE_NAME}']
+options:
+  machineType: 'E2_HIGHCPU_32'
+  diskSizeGb: 200
+substitutions:
+  _IMAGE_NAME: '${BASE_IMAGE_NAME}:latest'

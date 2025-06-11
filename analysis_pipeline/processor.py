@@ -63,9 +63,7 @@ async def process_analysis(video_id):
     convex_manager = ConvexManager()
 
     try:
-        # Update Convex status to "Analyzing"
-        logger.info(f"Updating Convex status to '{STATUS_ANALYZING}' for video ID: {video_id}")
-        convex_manager.update_video_status(video_id, STATUS_ANALYZING)
+        # Note: Convex status is updated to "Analyzing" in main.py before calling this function
 
         # Initialize file manager
         file_manager = FileManager(video_id)
@@ -171,8 +169,8 @@ async def process_analysis(video_id):
         except Exception as e:
             logger.warning(f"Error handling intermediate files: {str(e)}")
 
-        # Now process audio in parallel
-        with concurrent.futures.ThreadPoolExecutor() as executor:
+        # Now process audio in parallel (limit workers to prevent resource exhaustion)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             # Start audio sentiment analysis
             logger.info("Step 4: Processing audio sentiment analysis")
             audio_sentiment_future = executor.submit(
@@ -234,15 +232,28 @@ async def process_analysis(video_id):
             logger.info("Step 6: Analyzing audio transcription highlights")
 
             # Update Convex status to "Finding highlights"
+            print(f"📊 Updating status to 'Finding highlights' for video {video_id}...", flush=True)
+            success = convex_manager.update_video_status(video_id, STATUS_FINDING_HIGHLIGHTS)
+            if success:
+                print(f"✅ Status updated to 'Finding highlights'", flush=True)
             logger.info(f"Updating Convex status to '{STATUS_FINDING_HIGHLIGHTS}' for video ID: {video_id}")
-            convex_manager.update_video_status(video_id, STATUS_FINDING_HIGHLIGHTS)
 
-            audio_highlights_future = executor.submit(
-                analyze_transcription_highlights,
-                video_id,
-                str(transcript_file),
-                str(audio_analysis_dir)
-            )
+            # Add debugging for highlights analysis
+            def analyze_highlights_with_debug():
+                print(f"🔍 Starting highlights analysis for video {video_id}...", flush=True)
+                try:
+                    result = analyze_transcription_highlights(
+                        video_id,
+                        str(transcript_file),
+                        str(audio_analysis_dir)
+                    )
+                    print(f"✅ Highlights analysis completed for video {video_id}", flush=True)
+                    return result
+                except Exception as e:
+                    print(f"❌ Highlights analysis failed for video {video_id}: {e}", flush=True)
+                    raise
+
+            audio_highlights_future = executor.submit(analyze_highlights_with_debug)
 
             # Plot audio metrics
             logger.info("Step 7: Plotting audio metrics")
@@ -252,11 +263,31 @@ async def process_analysis(video_id):
                 video_id
             )
 
-            # Wait for all remaining tasks to complete
-            sliding_window_result = sliding_window_future.result()
-            audio_highlights_result = audio_highlights_future.result()
-            # Store the plot result for the return value
-            audio_plot_result = audio_plot_future.result()
+            # Wait for all remaining tasks to complete with timeouts
+            try:
+                sliding_window_result = sliding_window_future.result(timeout=300)  # 5 minutes
+                logger.info("✅ Sliding window analysis completed")
+            except concurrent.futures.TimeoutError:
+                logger.error("❌ Sliding window analysis timed out")
+                sliding_window_result = None
+
+            try:
+                print(f"⏳ Waiting for highlights analysis to complete (timeout: 2 minutes)...", flush=True)
+                audio_highlights_result = audio_highlights_future.result(timeout=120)  # 2 minutes
+                print(f"✅ Audio highlights analysis completed", flush=True)
+                logger.info("✅ Audio highlights analysis completed")
+            except concurrent.futures.TimeoutError:
+                print(f"⏰ Audio highlights analysis timed out after 2 minutes", flush=True)
+                logger.error("❌ Audio highlights analysis timed out")
+                audio_highlights_result = None
+
+            try:
+                # Store the plot result for the return value
+                audio_plot_result = audio_plot_future.result(timeout=120)  # 2 minutes
+                logger.info("✅ Audio plot generation completed")
+            except concurrent.futures.TimeoutError:
+                logger.error("❌ Audio plot generation timed out")
+                audio_plot_result = None
 
         # Step 7: Integrate chat and audio analysis
         logger.info("Step 7: Integrating chat and audio analysis")

@@ -103,6 +103,37 @@ class GPUOptimizedParakeetTranscriber:
             overlap_ms = 5 * 1000  # 5 seconds
         
         return chunk_duration_ms, overlap_ms
+
+    def cleanup_gpu_resources(self):
+        """Clean up GPU resources and memory after transcription"""
+        try:
+            print("🧹 Cleaning up GPU resources...", flush=True)
+
+            # Clear the model from memory
+            if hasattr(self, 'model') and self.model is not None:
+                del self.model
+                self.model = None
+                print("✅ Model cleared from memory", flush=True)
+
+            # Clear CUDA cache if available
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                print("✅ CUDA cache cleared", flush=True)
+
+                # Get memory info after cleanup
+                memory_allocated = torch.cuda.memory_allocated() / (1024**3)
+                memory_reserved = torch.cuda.memory_reserved() / (1024**3)
+                print(f"📊 GPU Memory after cleanup: {memory_allocated:.2f}GB allocated, {memory_reserved:.2f}GB reserved", flush=True)
+
+            # Force garbage collection
+            import gc
+            gc.collect()
+            print("✅ Garbage collection completed", flush=True)
+
+        except Exception as e:
+            print(f"⚠️  Error during GPU cleanup: {e}", flush=True)
+            logger.warning(f"Error during GPU cleanup: {e}")
     
     def _create_audio_chunks(self, audio_file_path: str, duration_seconds: float) -> List[Dict]:
         """Create audio chunks for processing"""
@@ -190,6 +221,9 @@ class GPUOptimizedParakeetTranscriber:
                 except:
                     pass
         
+        # CRITICAL: Clean up GPU memory after transcription
+        self.cleanup_gpu_resources()
+
         return all_words, all_segments, full_text_parts
     
     def _process_chunk_result(self, output, chunk_info: Dict, all_words: List, all_segments: List, full_text_parts: List):

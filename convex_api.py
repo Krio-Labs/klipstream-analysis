@@ -136,13 +136,34 @@ class ConvexAPIClient:
         try:
             result = self.query("video:getByTwitchIdPublic", {"twitchId": twitch_id})
 
-            if result.get("status") == "success" and "value" in result:
-                return result["value"]
+            # Handle different response formats
+            if isinstance(result, dict):
+                if result.get("status") == "success" and "value" in result:
+                    return result["value"]
+                elif result.get("status") == "error":
+                    logger.debug(f"Video {twitch_id} not found: {result.get('errorMessage', 'Unknown error')}")
+                    return None
+
+            # Direct result (no wrapper)
+            if result:
+                return result
 
             return None
         except Exception as e:
             logger.error(f"Error getting video by Twitch ID {twitch_id}: {str(e)}")
             return None
+
+    def get_video(self, twitch_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Alias for get_video_by_twitch_id for compatibility.
+
+        Args:
+            twitch_id: The Twitch ID of the video.
+
+        Returns:
+            The video data if found, None otherwise.
+        """
+        return self.get_video_by_twitch_id(twitch_id)
 
     def update_video_status(self, video_id: str, status: str) -> bool:
         """
@@ -175,7 +196,21 @@ class ConvexAPIClient:
         """
         try:
             result = self.mutation("video:updateStatusByTwitchId", {"twitchId": twitch_id, "status": status})
-            return result.get("status") == "success"
+
+            # Handle the actual response format from Convex
+            if result and result.get("status") == "success":
+                value = result.get("value", {})
+                if value.get("success"):
+                    logger.debug(f"Successfully updated status for video {twitch_id} to '{status}'")
+                    return True
+
+            # Also check for direct success field
+            if result and result.get("success"):
+                logger.debug(f"Successfully updated status for video {twitch_id} to '{status}'")
+                return True
+
+            logger.error(f"Failed to update status for video {twitch_id}: {result}")
+            return False
         except Exception as e:
             logger.error(f"Error updating video status for Twitch ID {twitch_id}: {str(e)}")
             return False
@@ -232,26 +267,33 @@ class ConvexAPIClient:
             True if the creation was successful, False otherwise.
         """
         try:
-            # Use the existing insert mutation with minimal required fields
-            # Using the provided valid team ID
-            result = self.mutation("video:insert", {
-                "team": "js7bj9zgdkyj9ykvr4m6jarxkh7ep9fa",  # Valid team ID
+            # Use the createVideoMinimal mutation specifically designed for the pipeline
+            # This mutation handles the team ID automatically
+            result = self.mutation("video:createVideoMinimal", {
                 "twitch_id": twitch_id,
-                "title": f"Twitch VOD {twitch_id}",
-                "thumbnail_id": "placeholder",
-                "duration": "unknown",
-                "status": status
+                "status": status,
+                "team_id": "js7bj9zgdkyj9ykvr4m6jarxkh7ep9fa"  # Valid team ID from memories
             })
 
-            if result:
-                logger.info(f"Successfully created video entry for Twitch ID {twitch_id}: {result}")
-                return True
-            else:
-                logger.error(f"Failed to create video entry for Twitch ID {twitch_id}: {result}")
-                return False
+            # Handle the actual response format from Convex
+            if result and result.get("status") == "success":
+                value = result.get("value", {})
+                if value.get("success") or value.get("created"):
+                    logger.info(f"Successfully created video entry for Twitch ID {twitch_id}: {value.get('videoId')}")
+                    return True
+
+            logger.error(f"Failed to create video entry for Twitch ID {twitch_id}: {result}")
+            return False
 
         except Exception as e:
-            logger.error(f"Error creating video entry for Twitch ID {twitch_id}: {str(e)}")
+            error_msg = str(e)
+            logger.error(f"Error creating video entry for Twitch ID {twitch_id}: {error_msg}")
+
+            # If the video already exists, that's actually success
+            if "already exists" in error_msg.lower():
+                logger.info(f"Video {twitch_id} already exists in database")
+                return True
+
             return False
 
 # Example usage

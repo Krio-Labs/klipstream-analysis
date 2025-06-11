@@ -28,8 +28,8 @@ def setup_logger(name, log_file=None, level=logging.CRITICAL):
     # Prevent propagation to avoid duplicate messages
     logger.propagate = False
 
-    # Only main and processor show progress, everything else is silent
-    if name in ['main', 'processor']:
+    # Only main, processor, and convex_client show progress, everything else is silent
+    if name in ['main', 'processor', 'convex_client']:
         logger.setLevel(logging.INFO)
         console_level = logging.INFO
     else:
@@ -50,7 +50,7 @@ def setup_logger(name, log_file=None, level=logging.CRITICAL):
     logger.addHandler(console_handler)
 
     # Only create file handler for main components
-    if name in ['main', 'processor']:
+    if name in ['main', 'processor', 'convex_client']:
         file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
         if log_file is None:

@@ -1,0 +1,56 @@
+# Optimized requirements with pinned versions for faster installs
+# Core data processing (lightweight first)
+numpy==1.26.4
+pandas==2.3.0
+scipy==1.15.3
+scikit-learn==1.7.0
+
+# Utilities (install early for caching)
+tqdm==4.67.1
+python-dotenv==1.1.0
+PyYAML==6.0.2
+emoji==2.14.1
+psutil==7.0.0
+ijson==3.4.0
+requests==2.32.4
+
+# Audio processing (before heavy ML packages)
+librosa==0.11.0
+pydub==0.25.1
+soundfile==0.13.1
+
+# Visualization
+matplotlib==3.10.3
+seaborn==0.13.2
+
+# API clients (lightweight)
+deepgram-sdk==4.3.0
+openai==1.86.0
+google-cloud-storage==3.1.0
+convex==0.7.0
+
+# Cloud Functions
+functions-framework==3.8.3
+google-api-core==2.25.0
+google-auth==2.40.3
+
+# Async support
+aiohttp==3.12.12
+
+# FastAPI and async web framework
+fastapi==0.115.12
+uvicorn==0.34.3
+pydantic==2.11.5
+
+# Heavy ML packages last (for better caching)
+# PyTorch with CUDA support
+--find-links https://download.pytorch.org/whl/torch_stable.html
+torch==2.7.1
+torchaudio==2.7.1
+
+# Hugging Face and ML models
+transformers==4.51.3
+accelerate==1.7.0
+
+# NeMo toolkit for NVIDIA Parakeet models (heaviest package)
+nemo_toolkit[asr]==2.3.1

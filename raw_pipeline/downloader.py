@@ -53,6 +53,7 @@ class TwitchVideoDownloader:
             temp_dir = Path.home() / '.dotnet' / 'bundle_extract'
             temp_dir.mkdir(parents=True, exist_ok=True)
             os.environ['DOTNET_BUNDLE_EXTRACT_BASE_DIR'] = str(temp_dir)
+            logger.info(f"Set DOTNET_BUNDLE_EXTRACT_BASE_DIR to {temp_dir}")
 
     def _verify_ffmpeg_exists(self):
         """Verify that ffmpeg is installed and accessible"""
@@ -116,12 +117,20 @@ class TwitchVideoDownloader:
         ]
 
         try:
+            # Prepare environment for macOS .NET bundle extraction
+            env = os.environ.copy()
+            if platform.system() == "Darwin":
+                temp_dir = Path.home() / '.dotnet' / 'bundle_extract'
+                temp_dir.mkdir(parents=True, exist_ok=True)
+                env['DOTNET_BUNDLE_EXTRACT_BASE_DIR'] = str(temp_dir)
+
             # Run the command and capture the output
             result = subprocess.run(
                 command,
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
+                env=env
             )
 
             # Parse the raw output
@@ -186,11 +195,39 @@ class TwitchVideoDownloader:
         """
         video_file = RAW_VIDEOS_DIR / f"{video_id}.mp4"
 
-        # Check if the file already exists (caching mechanism)
+        # Update Convex status to "Downloading" before starting download
+        try:
+            from utils.convex_client_updated import ConvexManager
+            convex_manager = ConvexManager()
+
+            # Print to terminal immediately so user sees it
+            print(f"📊 Updating status to 'Downloading' for video {video_id}...", flush=True)
+
+            success = convex_manager.update_video_status(video_id, "Downloading")
+            if success:
+                print(f"✅ Status updated to 'Downloading'", flush=True)
+                logger.info(f"📊 Updated Convex status to 'Downloading' for video {video_id}")
+            else:
+                print(f"⚠️  Status update failed", flush=True)
+                logger.warning(f"Failed to update Convex status to 'Downloading'")
+        except Exception as e:
+            print(f"❌ Status update error: {e}", flush=True)
+            logger.warning(f"Failed to update Convex status: {e}")
+
+        # Check if the file already exists and has content (caching mechanism)
         if video_file.exists():
-            file_size_mb = video_file.stat().st_size / (1024 * 1024)
-            logger.info(f"📹 Using cached video file: {file_size_mb:.1f} MB ({video_file})")
-            return video_file
+            file_size = video_file.stat().st_size
+            file_size_mb = file_size / (1024 * 1024)
+
+            # Only use cached file if it has content (> 1MB to be safe)
+            if file_size > 1024 * 1024:  # At least 1MB
+                logger.info(f"📹 Using cached video file: {file_size_mb:.1f} MB ({video_file})")
+                return video_file
+            else:
+                logger.warning(f"📹 Cached file is too small ({file_size} bytes), re-downloading...")
+                # Remove the invalid cached file
+                video_file.unlink()
+                logger.info(f"📹 Removed invalid cached file: {video_file}")
 
         # Create command with strategy-specific settings
         command = [
@@ -239,14 +276,36 @@ class TwitchVideoDownloader:
 
         # Create progress bar for video download with cleaner format
         from tqdm import tqdm
-        pbar = tqdm(total=100, desc="📹 Video Download", unit="%",
-                   bar_format='{desc}: {percentage:3.0f}%|{bar}| {n:.0f}/{total:.0f}%',
-                   ncols=80, leave=True)
+        try:
+            pbar = tqdm(total=100, desc="📹 Video Download", unit="%",
+                       bar_format='{desc}: {percentage:3.0f}%|{bar}| {n:.0f}/{total:.0f}%',
+                       ncols=80, leave=True)
+        except Exception:
+            # Fallback to a simple progress tracker if tqdm fails
+            class SimpleProgress:
+                def __init__(self):
+                    self.n = 0
+                    self.desc = "📹 Video Download"
+                def set_description(self, desc):
+                    self.desc = desc
+                    print(f"\r{desc}", end="", flush=True)
+                def refresh(self):
+                    print(f"\r{self.desc}: {self.n:.0f}%", end="", flush=True)
+                def close(self):
+                    print()  # New line
+            pbar = SimpleProgress()
 
         # Log optimization settings at debug level only
         logger.debug(f"⚙️  Using optimized settings: {download_timeout}s timeout, {read_buffer_size}B buffer")
 
         start_time = time.time()
+
+        # Prepare environment for macOS .NET bundle extraction
+        env = os.environ.copy()
+        if platform.system() == "Darwin":
+            temp_dir = Path.home() / '.dotnet' / 'bundle_extract'
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            env['DOTNET_BUNDLE_EXTRACT_BASE_DIR'] = str(temp_dir)
 
         # Run the command with timeout
         try:
@@ -256,14 +315,15 @@ class TwitchVideoDownloader:
                 # For FastAPI context, we need to use a different approach
                 # Since we need streaming output, we'll set up the environment properly
                 # and then use asyncio.create_subprocess_exec with the correct environment
-                env = subprocess_wrapper.base_env.copy()
+                api_env = subprocess_wrapper.base_env.copy()
+                api_env.update(env)  # Add our environment variables
                 cwd = subprocess_wrapper.working_directory
 
                 process = await asyncio.create_subprocess_exec(
                     *command,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    env=env,
+                    env=api_env,
                     cwd=cwd
                 )
             except ImportError:
@@ -271,7 +331,8 @@ class TwitchVideoDownloader:
                 process = await asyncio.create_subprocess_exec(
                     *command,
                     stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
+                    stderr=asyncio.subprocess.PIPE,
+                    env=env
                 )
         except Exception as e:
             raise RuntimeError(f"Failed to start video download process: {str(e)}")
@@ -345,14 +406,16 @@ class TwitchVideoDownloader:
                     break
                 # Update progress bar periodically even without output
                 if (current_time - last_update_time) > 2:
-                    pbar.refresh()
+                    if hasattr(pbar, 'refresh'):
+                        pbar.refresh()
                     last_update_time = current_time
 
         # Wait for process to complete and get return code
         return_code = await process.wait()
 
         # Close progress bar
-        pbar.close()
+        if hasattr(pbar, 'close'):
+            pbar.close()
 
         if return_code != 0:
             # Try to get any remaining stderr content if stderr exists
@@ -372,11 +435,15 @@ class TwitchVideoDownloader:
             TEMP_DIR.mkdir(exist_ok=True, parents=True)
             logger.info(f"Cleaned up temporary directory: {TEMP_DIR}")
 
-        # Log video file size with enhanced formatting
+        # Validate the downloaded file
         if video_file.exists():
             file_size_bytes = video_file.stat().st_size
             file_size_mb = file_size_bytes / (1024 * 1024)
             file_size_gb = file_size_bytes / (1024 * 1024 * 1024)
+
+            # Check if file has reasonable content (at least 1MB)
+            if file_size_bytes < 1024 * 1024:  # Less than 1MB
+                raise RuntimeError(f"Downloaded video file is too small ({file_size_bytes} bytes). Download may have failed.")
 
             if file_size_gb >= 1.0:
                 logger.info(f"📹 Video file downloaded: {file_size_gb:.2f} GB ({file_size_mb:.1f} MB)")
@@ -384,7 +451,7 @@ class TwitchVideoDownloader:
                 logger.info(f"📹 Video file downloaded: {file_size_mb:.1f} MB")
             logger.info(f"📹 Video file path: {video_file}")
         else:
-            logger.warning(f"Video file not found: {video_file}")
+            raise RuntimeError(f"Video file not found after download: {video_file}")
 
         return video_file
 
@@ -415,8 +482,12 @@ class TwitchVideoDownloader:
             stage_name = stage_match.group(1)
             stage_num = int(stage_match.group(2))
 
-            # Update progress bar description
-            pbar.set_description(f"📹 {stage_name}")
+            # Update progress bar description and show progress
+            stage_desc = f"📹 {stage_name}"
+            if hasattr(pbar, 'set_description'):
+                pbar.set_description(stage_desc)
+            else:
+                print(f"\r{stage_desc}", end="", flush=True)
 
             # Calculate overall progress based on stage
             base_progress = (stage_num - 1) * 25  # Each stage is 25% of total
@@ -424,8 +495,12 @@ class TwitchVideoDownloader:
 
             # Update progress bar
             total_progress = base_progress
-            pbar.n = total_progress
-            pbar.refresh()
+            if hasattr(pbar, 'n'):
+                pbar.n = total_progress
+            if hasattr(pbar, 'refresh'):
+                pbar.refresh()
+            else:
+                print(f" [{total_progress:.0f}%]", end="", flush=True)
 
             return True
 
@@ -437,7 +512,11 @@ class TwitchVideoDownloader:
             stage_num = int(progress_match.group(3))
 
             # Update progress bar description to show current percentage
-            pbar.set_description(f"📹 {stage_name}")
+            stage_desc = f"📹 {stage_name} {progress_percent}%"
+            if hasattr(pbar, 'set_description'):
+                pbar.set_description(stage_desc)
+            else:
+                print(f"\r{stage_desc}", end="", flush=True)
 
             # Calculate overall progress
             base_progress = (stage_num - 1) * 25  # Each stage is 25% of total
@@ -448,8 +527,12 @@ class TwitchVideoDownloader:
             stage_progress[stage_num] = progress_percent
 
             # Update progress bar
-            pbar.n = total_progress
-            pbar.refresh()
+            if hasattr(pbar, 'n'):
+                pbar.n = total_progress
+            if hasattr(pbar, 'refresh'):
+                pbar.refresh()
+            else:
+                print(f" [{total_progress:.0f}%]", end="", flush=True)
 
             return True
 
@@ -517,20 +600,44 @@ class TwitchVideoDownloader:
 
         # Log audio thread count at debug level only
         logger.debug(f"🎵 Using {audio_threads} threads for audio processing")
+        logger.info(f"🎵 Audio extraction command: {' '.join(command)}")
+
+        # Verify ffmpeg binary exists and is executable
+        ffmpeg_path = command[0]
+        if not os.path.exists(ffmpeg_path):
+            raise FileNotFoundError(f"ffmpeg binary not found at: {ffmpeg_path}")
+        if not os.access(ffmpeg_path, os.X_OK):
+            logger.warning(f"ffmpeg binary not executable, attempting to fix: {ffmpeg_path}")
+            try:
+                os.chmod(ffmpeg_path, 0o755)
+            except Exception as e:
+                logger.error(f"Failed to make ffmpeg executable: {e}")
 
         # Update Convex status for audio processing
         from utils.convex_client_updated import ConvexManager
         convex_manager = ConvexManager()
-        convex_manager.update_video_status(video_id, "Processing audio")
+
+        print(f"📊 Updating status to 'Processing audio' for video {video_id}...", flush=True)
+        success = convex_manager.update_video_status(video_id, "Processing audio")
+        if success:
+            print(f"✅ Status updated to 'Processing audio'", flush=True)
 
         # Create progress bar for audio conversion
         pbar = tqdm(total=100, desc="🎵 Converting audio", unit="%")
+
+        # Prepare environment for subprocess
+        env = os.environ.copy()
+        if platform.system() == "Darwin":
+            temp_dir = Path.home() / '.dotnet' / 'bundle_extract'
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            env['DOTNET_BUNDLE_EXTRACT_BASE_DIR'] = str(temp_dir)
 
         # Run the command
         process = await asyncio.create_subprocess_exec(
             *command,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.PIPE,
+            env=env
         )
 
         # Get system-optimized timeout for audio extraction
@@ -583,7 +690,23 @@ class TwitchVideoDownloader:
             # If we have an error, try to get any remaining stderr content
             stderr_data = await process.stderr.read()
             stderr_str = stderr_data.decode('utf-8', errors='replace')
-            raise RuntimeError(f"Error extracting audio: {stderr_str}")
+
+            # Also try to get stdout content for more context
+            stdout_data = await process.stdout.read()
+            stdout_str = stdout_data.decode('utf-8', errors='replace')
+
+            error_msg = f"Error extracting audio (return code: {return_code})"
+            if stderr_str.strip():
+                error_msg += f"\nStderr: {stderr_str}"
+            if stdout_str.strip():
+                error_msg += f"\nStdout: {stdout_str}"
+
+            # Log the full command for debugging
+            logger.error(f"Failed command: {' '.join(command)}")
+            logger.error(f"Video file exists: {video_file.exists()}")
+            logger.error(f"Video file size: {video_file.stat().st_size if video_file.exists() else 'N/A'}")
+
+            raise RuntimeError(error_msg)
 
         # Log audio file size with enhanced formatting
         if audio_file.exists():
@@ -622,6 +745,16 @@ class TwitchVideoDownloader:
 
         # Download video
         video_file = await self.download_video(video_id)
+
+        # Verify video file exists and has content
+        if not video_file.exists():
+            raise RuntimeError(f"Video download failed: File does not exist at {video_file}")
+
+        file_size = video_file.stat().st_size
+        if file_size == 0:
+            raise RuntimeError(f"Video download failed: File is empty at {video_file}")
+
+        logger.info(f"✅ Video download verified: {file_size / (1024*1024):.1f} MB")
 
         # Extract audio
         audio_file = await self.extract_audio(video_file, video_id)

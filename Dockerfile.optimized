@@ -1,0 +1,103 @@
+# Multi-Stage Optimized Dockerfile for KlipStream Analysis
+# Stage 1: Build dependencies and cache heavy packages
+FROM python:3.10-slim as builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    wget \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Upgrade pip in virtual environment
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Copy and install requirements in optimized order
+COPY requirements.optimized.txt /tmp/requirements.txt
+WORKDIR /tmp
+
+# Install dependencies with optimizations
+RUN pip install --no-cache-dir \
+    --find-links https://download.pytorch.org/whl/torch_stable.html \
+    -r requirements.txt
+
+# Install additional GPU tools
+RUN pip install --no-cache-dir nvidia-ml-py3 pynvml
+
+# Stage 2: Runtime image (much smaller)
+FROM python:3.10-slim as runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install only runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Set working directory
+WORKDIR /app
+
+# Copy only necessary binaries (detect OS at runtime)
+COPY raw_pipeline/bin/TwitchDownloaderCLI /app/raw_pipeline/bin/TwitchDownloaderCLI
+COPY raw_pipeline/bin/ffmpeg /app/raw_pipeline/bin/ffmpeg
+
+# Make binaries executable
+RUN chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI \
+    && chmod +x /app/raw_pipeline/bin/ffmpeg
+
+# Copy application code (do this last for better caching)
+COPY . /app/
+
+# Set GPU environment variables
+ENV CUDA_VISIBLE_DEVICES=0 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512 \
+    ENABLE_GPU_TRANSCRIPTION=true \
+    PARAKEET_MODEL_NAME=nvidia/parakeet-tdt-0.6b-v2 \
+    GPU_BATCH_SIZE=8 \
+    GPU_MEMORY_LIMIT_GB=20 \
+    TRANSCRIPTION_METHOD=auto \
+    ENABLE_FALLBACK=true \
+    COST_OPTIMIZATION=true \
+    CHUNK_DURATION_MINUTES=10 \
+    MAX_CONCURRENT_CHUNKS=4 \
+    ENABLE_BATCH_PROCESSING=true \
+    ENABLE_PERFORMANCE_METRICS=true \
+    CLOUD_RUN_TIMEOUT_SECONDS=3600 \
+    MAX_FILE_SIZE_GB=2
+
+# Create necessary directories
+RUN mkdir -p /app/output/raw /app/output/analysis /app/output/transcripts /app/output/cost_tracking \
+    && mkdir -p /tmp/chunks /tmp/models
+
+# Copy health check script
+COPY health_check.py /app/health_check.py
+RUN chmod +x /app/health_check.py
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD python3 /app/health_check.py || exit 1
+
+# Expose port
+EXPOSE 8080
+
+# Set user (Cloud Run requirement)
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
+# Start FastAPI server
+CMD ["python3", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]

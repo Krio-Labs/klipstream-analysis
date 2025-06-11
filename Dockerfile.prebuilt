@@ -1,0 +1,48 @@
+# Ultra-fast deployment using pre-built base image
+# This approach uses a pre-built base image with all heavy dependencies
+# Deployment time: 1-2 minutes
+
+# Use our pre-built base image (build this once, reuse many times)
+FROM gcr.io/klipstream/klipstream-base:latest
+
+# Set working directory
+WORKDIR /app
+
+# Copy only application code (very fast)
+COPY . /app/
+
+# Copy binaries
+COPY raw_pipeline/bin/TwitchDownloaderCLI /app/raw_pipeline/bin/TwitchDownloaderCLI
+COPY raw_pipeline/bin/ffmpeg /app/raw_pipeline/bin/ffmpeg
+RUN chmod +x /app/raw_pipeline/bin/TwitchDownloaderCLI /app/raw_pipeline/bin/ffmpeg
+
+# Set GPU environment variables
+ENV CUDA_VISIBLE_DEVICES=0 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512 \
+    ENABLE_GPU_TRANSCRIPTION=true \
+    PARAKEET_MODEL_NAME=nvidia/parakeet-tdt-0.6b-v2 \
+    GPU_BATCH_SIZE=8 \
+    GPU_MEMORY_LIMIT_GB=20 \
+    TRANSCRIPTION_METHOD=auto \
+    ENABLE_FALLBACK=true \
+    COST_OPTIMIZATION=true
+
+# Create necessary directories
+RUN mkdir -p /app/output/raw /app/output/analysis /app/output/transcripts /app/output/cost_tracking \
+    && mkdir -p /tmp/chunks /tmp/models
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD python3 /app/health_check.py || exit 1
+
+# Expose port
+EXPOSE 8080
+
+# Set user
+RUN chown -R appuser:appuser /app
+USER appuser
+
+# Start FastAPI server
+CMD ["python3", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]

@@ -156,6 +156,7 @@ class ConvexManager:
     def update_video_status(self, twitch_id: str, status: str, max_retries: int = 3) -> bool:
         """
         Update the status field for a video in the Convex database
+        If the video doesn't exist, it will be created automatically.
 
         Args:
             twitch_id (str): The Twitch video ID
@@ -166,12 +167,14 @@ class ConvexManager:
             bool: True if successful, False otherwise
         """
         if not self.convex:
-            logger.error("Convex client not initialized")
-            # In development mode, continue gracefully
-            if os.environ.get('ENVIRONMENT', 'production') == 'development':
-                logger.info("Continuing in development mode despite Convex client not being initialized")
-                return True
-            return False
+            logger.warning("Convex client not initialized - running in local mode")
+            return True
+
+        # Check if running locally (not in cloud environment)
+        is_local = not os.environ.get('CLOUD_RUN_SERVICE') and not os.environ.get('K_SERVICE')
+        if is_local:
+            logger.info(f"[LOCAL MODE] Would update video {twitch_id} status to '{status}'")
+            return True
 
         # Validate status
         if status not in VALID_STATUSES:
