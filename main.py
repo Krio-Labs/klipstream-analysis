@@ -157,8 +157,26 @@ def setup_gcs_authentication():
 def configure_transcription_environment():
     """
     Configure transcription environment based on available hardware and user preferences
+
+    TEMPORARY: Currently using Deepgram for all transcription while GPU transcription
+    is being optimized. This can be easily reverted using transcription_config.py.
     """
-    # Detect GPU capabilities
+    # Import transcription configuration module
+    from transcription_config import (
+        get_transcription_method,
+        is_using_deepgram,
+        apply_transcription_config_to_environment,
+        get_transcription_status_for_logging
+    )
+
+    # Apply transcription configuration to environment
+    apply_transcription_config_to_environment()
+
+    # Get the configured transcription method
+    configured_method = get_transcription_method()
+    FORCE_DEEPGRAM_TRANSCRIPTION = is_using_deepgram()
+
+    # Detect GPU capabilities (still needed for other processes)
     gpu_info = detect_gpu_capabilities()
 
     # Set environment variables for transcription configuration
@@ -171,7 +189,7 @@ def configure_transcription_environment():
         "PARAKEET_MODEL_NAME": os.environ.get("PARAKEET_MODEL_NAME", "nvidia/parakeet-tdt-0.6b-v2")
     }
 
-    # Enhanced GPU optimization configuration
+    # Enhanced GPU optimization configuration (preserved for when we re-enable)
     enhanced_gpu_config = {
         "ENABLE_ENHANCED_GPU_OPTIMIZATION": os.environ.get("ENABLE_ENHANCED_GPU_OPTIMIZATION", "true"),
         "ENABLE_AMP": os.environ.get("ENABLE_AMP", "true"),
@@ -186,34 +204,46 @@ def configure_transcription_environment():
         "SAVE_PERFORMANCE_METRICS": os.environ.get("SAVE_PERFORMANCE_METRICS", "true")
     }
 
-    # Auto-configure based on detected hardware
-    if transcription_config["TRANSCRIPTION_METHOD"] == "auto":
-        if gpu_info["nvidia_cuda_available"] and gpu_info["gpu_memory_gb"] >= 4:
-            transcription_config["TRANSCRIPTION_METHOD"] = "parakeet_enhanced"
-            logger.info("Auto-configured for Enhanced NVIDIA Parakeet GPU transcription")
-        elif gpu_info["apple_metal_available"]:
-            transcription_config["TRANSCRIPTION_METHOD"] = "parakeet_enhanced"
-            logger.info("Auto-configured for Enhanced Apple Silicon Parakeet transcription")
-        else:
-            transcription_config["TRANSCRIPTION_METHOD"] = "deepgram"
-            logger.info("Auto-configured for Deepgram cloud transcription")
+    # TEMPORARY: Override transcription method to use Deepgram
+    if FORCE_DEEPGRAM_TRANSCRIPTION:
+        transcription_config["TRANSCRIPTION_METHOD"] = "deepgram"
+        logger.info("🔄 TEMPORARY: Forcing Deepgram transcription (GPU transcription disabled)")
+        logger.info("   To re-enable GPU transcription, set FORCE_DEEPGRAM_TRANSCRIPTION=false")
+    else:
+        # Original auto-configuration logic (preserved for easy re-enabling)
+        if transcription_config["TRANSCRIPTION_METHOD"] == "auto":
+            if gpu_info["nvidia_cuda_available"] and gpu_info["gpu_memory_gb"] >= 4:
+                transcription_config["TRANSCRIPTION_METHOD"] = "parakeet_enhanced"
+                logger.info("Auto-configured for Enhanced NVIDIA Parakeet GPU transcription")
+            elif gpu_info["apple_metal_available"]:
+                transcription_config["TRANSCRIPTION_METHOD"] = "parakeet_enhanced"
+                logger.info("Auto-configured for Enhanced Apple Silicon Parakeet transcription")
+            else:
+                transcription_config["TRANSCRIPTION_METHOD"] = "deepgram"
+                logger.info("Auto-configured for Deepgram cloud transcription")
 
     # Apply configuration to environment
     for key, value in transcription_config.items():
         os.environ[key] = str(value)
         logger.debug(f"Set {key}={value}")
 
-    for key, value in enhanced_gpu_config.items():
-        os.environ[key] = str(value)
-        logger.debug(f"Set {key}={value}")
+    # Only apply enhanced GPU config if not forcing Deepgram
+    if not FORCE_DEEPGRAM_TRANSCRIPTION:
+        for key, value in enhanced_gpu_config.items():
+            os.environ[key] = str(value)
+            logger.debug(f"Set {key}={value}")
 
-    # Log enhanced GPU optimization status
-    if enhanced_gpu_config["ENABLE_ENHANCED_GPU_OPTIMIZATION"] == "true":
-        logger.info("🚀 Enhanced GPU optimization enabled")
-        logger.info(f"   AMP: {enhanced_gpu_config['ENABLE_AMP']}")
-        logger.info(f"   Memory optimization: {enhanced_gpu_config['ENABLE_MEMORY_OPTIMIZATION']}")
-        logger.info(f"   Parallel chunking: {enhanced_gpu_config['ENABLE_PARALLEL_CHUNKING']}")
-        logger.info(f"   Performance monitoring: {enhanced_gpu_config['ENABLE_PERFORMANCE_MONITORING']}")
+        # Log enhanced GPU optimization status
+        if enhanced_gpu_config["ENABLE_ENHANCED_GPU_OPTIMIZATION"] == "true":
+            logger.info("🚀 Enhanced GPU optimization enabled")
+            logger.info(f"   AMP: {enhanced_gpu_config['ENABLE_AMP']}")
+            logger.info(f"   Memory optimization: {enhanced_gpu_config['ENABLE_MEMORY_OPTIMIZATION']}")
+            logger.info(f"   Parallel chunking: {enhanced_gpu_config['ENABLE_PARALLEL_CHUNKING']}")
+            logger.info(f"   Performance monitoring: {enhanced_gpu_config['ENABLE_PERFORMANCE_MONITORING']}")
+    else:
+        # Disable GPU transcription when forcing Deepgram
+        os.environ["ENABLE_GPU_TRANSCRIPTION"] = "false"
+        logger.info("🔄 GPU transcription disabled (using Deepgram)")
 
     return transcription_config, gpu_info
 
@@ -302,23 +332,35 @@ async def run_integrated_pipeline(url):
 
         # Configure transcription environment based on available hardware
         transcription_config, gpu_info = configure_transcription_environment()
-        logger.info(f"🎤 Transcription method: {transcription_config['TRANSCRIPTION_METHOD']}")
+
+        # Log transcription configuration with temporary status
+        from transcription_config import get_transcription_status_for_logging, is_using_deepgram
+
+        transcription_status = get_transcription_status_for_logging()
+        logger.info(f"🎤 Transcription method: {transcription_status}")
+
+        if is_using_deepgram():
+            logger.info("   💡 To re-enable GPU transcription: python transcription_config.py gpu")
+            logger.info("   💡 Or set environment variable: FORCE_DEEPGRAM_TRANSCRIPTION=false")
+
         logger.info(f"🖥️  GPU capabilities: CUDA={gpu_info['nvidia_cuda_available']}, Metal={gpu_info['apple_metal_available']}")
 
         # Configure GPU acceleration for other pipeline processes
         gpu_config = configure_gpu_acceleration(gpu_info)
         logger.info(f"🚀 GPU acceleration: {sum(gpu_config.values())}/{len(gpu_config)} processes enabled")
 
+        # Log specific GPU acceleration status for highlights analysis
+        if gpu_info["nvidia_cuda_available"] or gpu_info["apple_metal_available"]:
+            logger.info("🔥 GPU-optimized highlights analysis available:")
+            logger.info(f"   • GPU Memory: {gpu_info['gpu_memory_gb']:.1f}GB")
+            logger.info(f"   • Expected speedup: 2-50x for large datasets")
+            logger.info(f"   • Automatic CPU fallback: Enabled")
+        else:
+            logger.info("🖥️ CPU-only highlights analysis (GPU libraries not available)")
+            logger.info("   • Install cupy, cudf, cusignal for GPU acceleration")
+
         # Initialize file manager
         file_manager = FileManager(video_id)
-
-        # Update Convex status to "Queued"
-        print(f"📊 Updating status to 'Queued' for video {video_id}...", flush=True)
-        success = convex_manager.update_video_status(video_id, STATUS_QUEUED)
-        if success:
-            print(f"✅ Status updated to 'Queued'", flush=True)
-        else:
-            print(f"⚠️  Status update failed", flush=True)
 
         # Create required directories
         output_dir = BASE_DIR / "output"

@@ -310,6 +310,19 @@ class ConvexIntegration:
         """
         return self.client.create_video(video_data)
 
+    def create_video_minimal(self, twitch_id: str, status: str = "Queued") -> bool:
+        """
+        Create a new video entry with minimal information (used by pipeline).
+
+        Args:
+            twitch_id: The Twitch video ID
+            status: Initial status for the video
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        return self.client.create_video_minimal(twitch_id, status)
+
 # Example usage
 if __name__ == "__main__":
     import sys

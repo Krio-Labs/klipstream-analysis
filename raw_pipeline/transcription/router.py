@@ -50,14 +50,20 @@ class TranscriptionRouter:
     """Central orchestrator for transcription method selection and execution"""
     
     def __init__(self):
-        self.config = get_config()
+        # Always reload config to respect environment changes
+        from .config.settings import reload_config
+        self.config = reload_config()
+
         self.deepgram_handler = DeepgramHandler()
         self.parakeet_handler = None  # Lazy load
         self.hybrid_processor = None  # Lazy load
         self.fallback_manager = FallbackManager()
         self.cost_optimizer = CostOptimizer()
-        
-        logger.info("TranscriptionRouter initialized")
+
+        # Log configuration status
+        force_deepgram = os.environ.get("FORCE_DEEPGRAM_TRANSCRIPTION", "").lower() == "true"
+        logger.info(f"TranscriptionRouter initialized - Force Deepgram: {force_deepgram}")
+        logger.info(f"Config method: {self.config.transcription_method}, GPU enabled: {self.config.enable_gpu_transcription}")
     
     def _lazy_load_parakeet(self):
         """Lazy load Parakeet handler to avoid import issues when GPU not available"""
@@ -154,16 +160,32 @@ class TranscriptionRouter:
     
     def _select_transcription_method(self, audio_info: Dict) -> str:
         """Select optimal transcription method based on audio characteristics"""
-        
+
+        # PRIORITY 1: Check for forced Deepgram transcription (temporary override)
+        force_deepgram = os.environ.get("FORCE_DEEPGRAM_TRANSCRIPTION", "").lower() == "true"
+        if force_deepgram:
+            logger.info("🔄 FORCED: Using Deepgram transcription (temporary override)")
+            return "deepgram"
+
+        # PRIORITY 2: Check if transcription method is explicitly set to deepgram
+        if self.config.transcription_method == "deepgram":
+            logger.info("🌐 Using Deepgram transcription (explicitly configured)")
+            return "deepgram"
+
+        # PRIORITY 3: Check if GPU transcription is disabled
+        if not self.config.enable_gpu_transcription:
+            logger.info("🔄 GPU transcription disabled, using Deepgram")
+            return "deepgram"
+
         duration_hours = audio_info["duration_hours"]
         file_size_mb = audio_info["file_size_mb"]
-        
+
         # Check if GPU is available
         gpu_available = self._is_gpu_available()
-        
+
         # Use configuration-based method selection
         method = self.config.get_method_for_duration(duration_hours, gpu_available)
-        
+
         # Cost optimization override
         if self.config.cost_optimization:
             optimal_method = self.cost_optimizer.get_optimal_method(
@@ -172,7 +194,7 @@ class TranscriptionRouter:
             if optimal_method != method:
                 logger.info(f"Cost optimization: {method} → {optimal_method}")
                 method = optimal_method
-        
+
         # Final validation
         if method in ["parakeet", "parakeet_enhanced"] and not gpu_available:
             logger.warning("Parakeet selected but GPU unavailable, falling back to Deepgram")

@@ -140,7 +140,7 @@ class ConvexManager:
             logger.info(f"Video {twitch_id} not found in Convex, creating new entry...")
 
             # Create video with minimal information using the correct team ID
-            success = self.convex.create_video_minimal(twitch_id, "Queued")
+            success = self.convex.create_video_minimal(twitch_id, STATUS_DOWNLOADING)
 
             if success:
                 logger.info(f"Successfully created video entry for {twitch_id}")
@@ -374,18 +374,15 @@ class ConvexManager:
         # Try to update with retries
         for attempt in range(max_retries):
             try:
-                # Call the Convex mutation with exact format
+                # Call the correct ConvexIntegration method
                 logger.info(f"Updating URLs for video {twitch_id} (attempt {attempt + 1})...")
-                result = self.convex.mutation("video:updateUrls", {
-                    "twitchId": twitch_id,
-                    "urls": validated_urls
-                })
+                success = self.convex.update_urls(twitch_id, validated_urls)
 
-                if result and result.get("status") == "success":
+                if success:
                     logger.info(f"Successfully updated URLs for video {twitch_id}: {list(validated_urls.keys())}")
                     return True
                 else:
-                    logger.error(f"Failed to update URLs for video {twitch_id}: {result}")
+                    logger.error(f"Failed to update URLs for video {twitch_id}")
                     if attempt < max_retries - 1:
                         retry_delay = 2 ** attempt  # Exponential backoff: 1, 2, 4 seconds
                         logger.info(f"Retrying in {retry_delay} seconds...")

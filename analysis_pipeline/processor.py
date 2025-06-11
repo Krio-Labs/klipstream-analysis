@@ -238,20 +238,32 @@ async def process_analysis(video_id):
                 print(f"✅ Status updated to 'Finding highlights'", flush=True)
             logger.info(f"Updating Convex status to '{STATUS_FINDING_HIGHLIGHTS}' for video ID: {video_id}")
 
-            # Add debugging for highlights analysis
+            # Add debugging for highlights analysis with enhanced safety
             def analyze_highlights_with_debug():
-                print(f"🔍 Starting highlights analysis for video {video_id}...", flush=True)
+                print(f"🔍 Starting SAFE highlights analysis for video {video_id}...", flush=True)
                 try:
-                    result = analyze_transcription_highlights(
-                        video_id,
-                        str(transcript_file),
-                        str(audio_analysis_dir)
+                    # Use the new safe highlights analysis manager
+                    from analysis_pipeline.utils.process_manager import safe_highlights_analysis
+
+                    # Execute with enhanced timeout and safety measures
+                    result = safe_highlights_analysis(
+                        video_id=video_id,
+                        input_file=str(transcript_file),
+                        output_dir=str(audio_analysis_dir),
+                        timeout=90  # 90 second timeout
                     )
-                    print(f"✅ Highlights analysis completed for video {video_id}", flush=True)
+
+                    if result is not None:
+                        print(f"✅ SAFE highlights analysis completed for video {video_id}", flush=True)
+                    else:
+                        print(f"⚠️ SAFE highlights analysis returned no results for video {video_id}", flush=True)
+
                     return result
+
                 except Exception as e:
-                    print(f"❌ Highlights analysis failed for video {video_id}: {e}", flush=True)
-                    raise
+                    print(f"❌ SAFE highlights analysis failed for video {video_id}: {e}", flush=True)
+                    logger.error(f"SAFE highlights analysis failed: {str(e)}")
+                    return None  # Return None instead of raising to prevent pipeline failure
 
             audio_highlights_future = executor.submit(analyze_highlights_with_debug)
 
@@ -272,13 +284,26 @@ async def process_analysis(video_id):
                 sliding_window_result = None
 
             try:
-                print(f"⏳ Waiting for highlights analysis to complete (timeout: 2 minutes)...", flush=True)
-                audio_highlights_result = audio_highlights_future.result(timeout=120)  # 2 minutes
-                print(f"✅ Audio highlights analysis completed", flush=True)
-                logger.info("✅ Audio highlights analysis completed")
+                print(f"⏳ Waiting for SAFE highlights analysis to complete (timeout: 150 seconds)...", flush=True)
+                audio_highlights_result = audio_highlights_future.result(timeout=150)  # 2.5 minutes (buffer for 90s internal timeout)
+                print(f"✅ SAFE audio highlights analysis completed", flush=True)
+                logger.info("✅ SAFE audio highlights analysis completed")
             except concurrent.futures.TimeoutError:
-                print(f"⏰ Audio highlights analysis timed out after 2 minutes", flush=True)
-                logger.error("❌ Audio highlights analysis timed out")
+                print(f"⏰ SAFE audio highlights analysis timed out after 150 seconds", flush=True)
+                logger.error("❌ SAFE audio highlights analysis timed out - this should not happen with the new safety measures")
+
+                # Force cleanup of any hanging processes
+                try:
+                    from analysis_pipeline.utils.process_manager import cleanup_all_processes
+                    cleanup_all_processes()
+                    print(f"🧹 Forced cleanup of hanging processes completed", flush=True)
+                except Exception as cleanup_error:
+                    logger.error(f"Error during forced cleanup: {cleanup_error}")
+
+                audio_highlights_result = None
+            except Exception as e:
+                print(f"❌ SAFE audio highlights analysis failed with error: {e}", flush=True)
+                logger.error(f"❌ SAFE audio highlights analysis failed: {e}")
                 audio_highlights_result = None
 
             try:

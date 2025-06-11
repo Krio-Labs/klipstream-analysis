@@ -48,11 +48,16 @@ class TranscriptionConfig:
     @classmethod
     def from_environment(cls) -> 'TranscriptionConfig':
         """Create configuration from environment variables"""
-        
+
+        # Check for forced Deepgram transcription (temporary override)
+        force_deepgram = os.getenv("FORCE_DEEPGRAM_TRANSCRIPTION", "").lower() == "true"
+        transcription_method = "deepgram" if force_deepgram else os.getenv("TRANSCRIPTION_METHOD", "auto")
+        enable_gpu = False if force_deepgram else os.getenv("ENABLE_GPU_TRANSCRIPTION", "true").lower() == "true"
+
         return cls(
             # Method Selection
-            transcription_method=os.getenv("TRANSCRIPTION_METHOD", "auto"),
-            enable_gpu_transcription=os.getenv("ENABLE_GPU_TRANSCRIPTION", "true").lower() == "true",
+            transcription_method=transcription_method,
+            enable_gpu_transcription=enable_gpu,
             enable_fallback=os.getenv("ENABLE_FALLBACK", "true").lower() == "true",
             cost_optimization=os.getenv("COST_OPTIMIZATION", "true").lower() == "true",
             
