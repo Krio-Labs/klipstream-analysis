@@ -2324,18 +2324,48 @@ def run_integration(video_id):
                 except Exception as fallback_error:
                     logger.warning(f"Fallback upload failed: {str(fallback_error)}")
 
-            # Update Convex with the analysis_url using exact field name
-            if gcs_uri and upload_success:
-                try:
-                    logger.info(f"Updating Convex with analysis_url: {gcs_uri}")
-                    convex_manager.update_video_urls(video_id, {"analysis_url": gcs_uri})
-                except Exception as convex_error:
-                    logger.warning(f"Failed to update Convex with GCS URI: {str(convex_error)}")
-            else:
-                logger.warning("No GCS URI available for analysis_url update - continuing without upload")
+            # Update Convex with analysis_url pointing to the audio sentiment CSV file
+            try:
+                # Find and upload the audio sentiment analysis CSV file
+                audio_sentiment_csv = Path(f"output/Analysis/Audio/audio_{video_id}_sentiment.csv")
+                alt_audio_sentiment_csv = Path(f"/tmp/output/Analysis/Audio/audio_{video_id}_sentiment.csv")
+
+                analysis_csv_path = None
+                if audio_sentiment_csv.exists():
+                    analysis_csv_path = audio_sentiment_csv
+                elif alt_audio_sentiment_csv.exists():
+                    analysis_csv_path = alt_audio_sentiment_csv
+
+                if analysis_csv_path and analysis_csv_path.exists():
+                    logger.info(f"Uploading audio sentiment analysis CSV for analysis_url: {analysis_csv_path}")
+
+                    # Upload the audio sentiment CSV file
+                    if file_manager.upload_to_gcs("audio_sentiment"):
+                        # Get the GCS URI for the audio sentiment file
+                        analysis_gcs_uri = f"gs://{file_manager.get_bucket_name('audio_sentiment')}/{file_manager.get_gcs_path('audio_sentiment')}"
+                        logger.info(f"Successfully uploaded audio sentiment CSV to: {analysis_gcs_uri}")
+
+                        # Update Convex with the analysis CSV URL
+                        logger.info(f"Updating Convex with analysis_url (CSV): {analysis_gcs_uri}")
+                        convex_manager.update_video_urls(video_id, {"analysis_url": analysis_gcs_uri})
+                    else:
+                        logger.warning("Failed to upload audio sentiment CSV file to GCS")
+                        # Fallback: use integrated analysis URL if available
+                        if gcs_uri and upload_success:
+                            logger.info(f"Fallback: Using integrated analysis URL: {gcs_uri}")
+                            convex_manager.update_video_urls(video_id, {"analysis_url": gcs_uri})
+                else:
+                    logger.warning("Audio sentiment CSV file not found, using integrated analysis as fallback")
+                    # Fallback: use integrated analysis URL if available
+                    if gcs_uri and upload_success:
+                        logger.info(f"Fallback: Using integrated analysis URL: {gcs_uri}")
+                        convex_manager.update_video_urls(video_id, {"analysis_url": gcs_uri})
+
+            except Exception as convex_error:
+                logger.warning(f"Failed to update Convex with analysis_url: {str(convex_error)}")
                 # In development mode, this is acceptable
                 if os.environ.get('ENVIRONMENT', 'development') == 'development':
-                    logger.info("Running in development mode - GCS upload failure is non-critical")
+                    logger.info("Running in development mode - Convex update failure is non-critical")
         else:
             logger.info("GCS uploads disabled. Skipping upload of integrated analysis.")
     except Exception as e:

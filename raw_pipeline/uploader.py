@@ -154,8 +154,8 @@ def upload_files(video_id: str, specific_files: List[str] = None) -> List[Dict]:
     raw_files_to_upload = [
         # 1. Video file
         str(RAW_VIDEOS_DIR / f"{video_id}.mp4"),
-        # 2. Audio file
-        str(RAW_AUDIO_DIR / f"audio_{video_id}.wav"),
+        # 2. Audio file (MP3 format for compression)
+        str(RAW_AUDIO_DIR / f"audio_{video_id}.mp3"),
         # 3. Waveform file
         str(RAW_WAVEFORMS_DIR / f"audio_{video_id}_waveform.json"),
         # 4. Transcript paragraphs file
@@ -253,8 +253,8 @@ def upload_to_gcs(video_id, files):
         if video_result:
             url_updates["video_url"] = video_result["gcs_uri"]
 
-        # Check for audio file (MP3)
-        audio_result = next((r for r in uploaded_files if r["file_path"].endswith(".mp3")), None)
+        # Check for audio file (MP3 or WAV)
+        audio_result = next((r for r in uploaded_files if r["file_path"].endswith(".mp3") or r["file_path"].endswith(".wav")), None)
         if audio_result:
             url_updates["audio_url"] = audio_result["gcs_uri"]
 
