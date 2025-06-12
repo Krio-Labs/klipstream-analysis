@@ -170,21 +170,15 @@ class ConvexManager:
             logger.warning("Convex client not initialized - running in local mode")
             return True
 
-        # Check if running locally (not in cloud environment)
-        is_local = not os.environ.get('CLOUD_RUN_SERVICE') and not os.environ.get('K_SERVICE')
-        if is_local:
-            logger.info(f"[LOCAL MODE] Would update video {twitch_id} status to '{status}'")
-            return True
+        # Always make real API calls to Convex database
+        # Removed local mode detection - database should always be updated
 
         # Validate status
         if status not in VALID_STATUSES:
             logger.warning(f"Invalid status '{status}'. Valid statuses are: {VALID_STATUSES}")
             logger.warning(f"Proceeding with update anyway, but consider using a valid status")
 
-        # In test mode, just log the status update and return success
-        if self.test_mode:
-            logger.info(f"[TEST MODE] Would update status for video {twitch_id} to '{status}'")
-            return True
+        # Always make real API calls - removed test mode check
 
         # Track failures for development mode
         if not hasattr(self, '_convex_failures'):
@@ -297,10 +291,7 @@ class ConvexManager:
             logger.info(f"No progress data to update for video {twitch_id}")
             return True
 
-        # In test mode, just log the progress update and return success
-        if self.test_mode:
-            logger.info(f"[TEST MODE] Would update progress for video {twitch_id} (job {job_id}): {progress_data}")
-            return True
+        # Always make real API calls - removed test mode check
 
         # Log progress data for monitoring (Convex URLs schema doesn't support progress fields)
         logger.info(f"Progress update for video {twitch_id} (job {job_id}): {progress_data}")
@@ -366,10 +357,7 @@ class ConvexManager:
         for field, url in validated_urls.items():
             logger.info(f"  {field}: {url}")
 
-        # In test mode, just log the URL updates and return success
-        if self.test_mode:
-            logger.info(f"[TEST MODE] Would update URLs for video {twitch_id}: {list(validated_urls.keys())}")
-            return True
+        # Always make real API calls - removed test mode check
 
         # Try to update with retries
         for attempt in range(max_retries):
@@ -451,10 +439,7 @@ class ConvexManager:
             logger.error("Convex client not initialized")
             return False
 
-        # In test mode, just log and return success
-        if self.test_mode:
-            logger.info(f"[TEST MODE] Would update detailed progress for video {twitch_id} (job {job_id}): {detailed_progress}")
-            return True
+        # Always make real API calls - removed test mode check
 
         # Prepare detailed progress data
         progress_update = {
@@ -504,10 +489,7 @@ class ConvexManager:
             logger.error("Convex client not initialized")
             return False
 
-        # In test mode, just log and return success
-        if self.test_mode:
-            logger.info(f"[TEST MODE] Would track analytics for job {job_id}: {analytics_data}")
-            return True
+        # Always make real API calls - removed test mode check
 
         try:
             analytics_record = {
@@ -553,10 +535,7 @@ class ConvexManager:
             logger.error("Convex client not initialized")
             return False
 
-        # In test mode, just log and return success
-        if self.test_mode:
-            logger.info(f"[TEST MODE] Would store webhook config for video {twitch_id}: {webhook_config}")
-            return True
+        # Always make real API calls - removed test mode check
 
         try:
             webhook_update = {
