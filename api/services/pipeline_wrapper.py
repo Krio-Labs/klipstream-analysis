@@ -98,19 +98,27 @@ class EnhancedPipelineWrapper:
     ) -> Dict[str, Any]:
         """
         Run the integrated pipeline with enhanced progress tracking and error handling
-        
+
+        UPDATED: Now fully compatible with main.py pipeline including:
+        - Proper transcription configuration
+        - URL updates for all 7 Convex fields
+        - Enhanced error handling and status tracking
+        - GPU optimization support
+
         Args:
             video_url: URL of the video to process
             job_id: Unique job identifier
             progress_callback: Callback function for progress updates
-            
+            transcription_config: Transcription configuration (method, gpu, fallback, etc.)
+
         Returns:
-            Dictionary with processing results
+            Dictionary with processing results including all file URLs
         """
         tracker = PipelineProgressTracker(job_id, progress_callback)
-        
+
         try:
-            logger.info(f"Starting enhanced pipeline for job {job_id}")
+            logger.info(f"🚀 Starting enhanced pipeline for job {job_id}")
+            logger.info(f"📹 Video URL: {video_url}")
 
             # Stage 1: Queue and initialize
             await tracker.update_progress(ProcessingStage.QUEUED, 0, "Initializing analysis...")
@@ -118,50 +126,117 @@ class EnhancedPipelineWrapper:
             # Configure transcription settings if provided
             original_env = {}
             if transcription_config:
-                logger.info(f"Applying transcription configuration: {transcription_config}")
+                logger.info(f"🎤 Applying transcription configuration: {transcription_config}")
                 original_env = self._apply_transcription_config(transcription_config)
+            else:
+                logger.info("🎤 Using default transcription configuration")
 
-            # Import the main pipeline function
+            # Import the main pipeline function (updated to use current main.py)
             from main import run_integrated_pipeline
-            
-            # Create a wrapper function for retry
-            async def pipeline_execution():
-                # Import and run the integrated pipeline directly to avoid thread pool issues
-                # with subprocess execution in FastAPI environment
-                from main import run_integrated_pipeline
 
-                # Check if run_integrated_pipeline is async or sync
-                result = run_integrated_pipeline(video_url)
-                if asyncio.iscoroutine(result):
-                    return await result
-                else:
+            # Create a wrapper function that properly handles the async pipeline
+            async def pipeline_execution():
+                """Execute the main pipeline with proper async handling"""
+                try:
+                    # The main pipeline is async, so we await it directly
+                    logger.info(f"🔄 Executing main.py pipeline for job {job_id}")
+                    result = await run_integrated_pipeline(video_url)
+
+                    # Log pipeline result for debugging
+                    if result:
+                        logger.info(f"✅ Pipeline result status: {result.get('status', 'unknown')}")
+                        if result.get('video_id'):
+                            logger.info(f"📹 Video ID: {result['video_id']}")
+                        if result.get('stage_times'):
+                            logger.info(f"⏱️ Stage times: {result['stage_times']}")
+                        if result.get('transcription_metadata'):
+                            logger.info(f"🎤 Transcription metadata: {result['transcription_metadata']}")
+                    else:
+                        logger.warning("⚠️ Pipeline returned no result")
+
                     return result
-            
-            # Stage 2: Start downloading
-            await tracker.update_progress(ProcessingStage.DOWNLOADING, 5, "Starting video download...")
-            
+
+                except Exception as e:
+                    logger.error(f"❌ Pipeline execution failed: {str(e)}")
+                    raise
+
+            # Stage 2: Start pipeline execution
+            await tracker.update_progress(ProcessingStage.DOWNLOADING, 5, "Starting pipeline execution...")
+
             # Execute pipeline with retry logic
             result = await retry_processing_operation(
                 pipeline_execution,
                 operation_name=f"pipeline_execution_{job_id}"
             )
 
-            # Check if pipeline completed successfully
+            # Enhanced result validation and processing
             if result and result.get("status") == "completed":
-                # Pipeline already updated status to completed, just confirm final state
+                # Extract comprehensive results from pipeline
+                video_id = result.get("video_id")
+                files = result.get("files", {})
+                stage_times = result.get("stage_times", {})
+                transcription_metadata = result.get("transcription_metadata", {})
+                twitch_info = result.get("twitch_info", {})
+
+                # Log successful completion with details
+                logger.info(f"✅ Pipeline completed successfully for job {job_id}")
+                logger.info(f"📹 Video ID: {video_id}")
+                logger.info(f"📁 Files processed: {len(files)} files")
+                logger.info(f"⏱️ Total duration: {result.get('total_duration', 0):.1f}s")
+
+                # Log transcription details if available
+                if transcription_metadata:
+                    method_used = transcription_metadata.get("method_used", "unknown")
+                    cost_estimate = transcription_metadata.get("cost_estimate", 0.0)
+                    gpu_used = transcription_metadata.get("gpu_used", False)
+                    processing_time = transcription_metadata.get("processing_time_seconds", 0.0)
+
+                    logger.info(f"🎤 Transcription method: {method_used}")
+                    logger.info(f"💰 Estimated cost: ${cost_estimate:.3f}")
+                    logger.info(f"🖥️ GPU used: {'Yes' if gpu_used else 'No'}")
+                    logger.info(f"⏱️ Transcription time: {processing_time:.1f}s")
+
+                # Update final progress
                 await tracker.update_progress(ProcessingStage.COMPLETED, 100, "Analysis completed successfully!")
-                logger.info(f"Pipeline completed successfully for job {job_id}")
+
+                # Return enhanced result with all metadata
+                enhanced_result = {
+                    **result,
+                    "job_id": job_id,
+                    "api_version": "2.0.0",
+                    "enhanced_tracking": True
+                }
+
+                return enhanced_result
+
             else:
                 # Pipeline failed or returned unexpected result
                 error_message = result.get("error", "Unknown error") if result else "Pipeline returned no result"
-                logger.error(f"Pipeline failed for job {job_id}: {error_message}")
+                logger.error(f"❌ Pipeline failed for job {job_id}: {error_message}")
+
+                # Create detailed error response
+                error_result = {
+                    "status": "failed",
+                    "error": error_message,
+                    "job_id": job_id,
+                    "stage_times": result.get("stage_times", {}) if result else {},
+                    "total_duration": result.get("total_duration", 0) if result else 0
+                }
+
                 raise Exception(f"Pipeline execution failed: {error_message}")
 
-            # Note: The actual pipeline (main.py) handles its own progress updates
-            # We don't need to simulate progress here as it causes status conflicts
-            
-            logger.info(f"Pipeline completed successfully for job {job_id}")
-            return result
+        except Exception as e:
+            logger.error(f"❌ Enhanced pipeline failed for job {job_id}: {str(e)}")
+
+            # Update progress with failure
+            await tracker.update_progress(
+                ProcessingStage.FAILED,
+                tracker.stage_weights[tracker.current_stage][0],  # Keep current progress
+                f"Failed: {str(e)}"
+            )
+
+            # Re-raise with context
+            raise Exception(f"Enhanced pipeline failed: {str(e)}") from e
             
         except Exception as e:
             logger.error(f"Pipeline failed for job {job_id}: {str(e)}")
@@ -295,6 +370,12 @@ class EnhancedPipelineWrapper:
         """
         Apply transcription configuration by setting environment variables
 
+        UPDATED: Now fully compatible with main.py transcription system including:
+        - Proper method mapping (auto, parakeet, deepgram, hybrid)
+        - GPU optimization settings
+        - Cost optimization and fallback configuration
+        - Temporary Deepgram override support
+
         Args:
             transcription_config: Dictionary with transcription configuration
 
@@ -305,7 +386,7 @@ class EnhancedPipelineWrapper:
 
         original_env = {}
 
-        # Map API config to environment variables
+        # Enhanced mapping for full main.py compatibility
         env_mapping = {
             'method': 'TRANSCRIPTION_METHOD',
             'enable_gpu': 'ENABLE_GPU_TRANSCRIPTION',
@@ -313,6 +394,16 @@ class EnhancedPipelineWrapper:
             'cost_optimization': 'COST_OPTIMIZATION'
         }
 
+        # Additional environment variables for enhanced GPU optimization
+        gpu_optimization_mapping = {
+            'enable_amp': 'ENABLE_AMP',
+            'enable_memory_optimization': 'ENABLE_MEMORY_OPTIMIZATION',
+            'enable_parallel_chunking': 'ENABLE_PARALLEL_CHUNKING',
+            'enable_device_optimization': 'ENABLE_DEVICE_OPTIMIZATION',
+            'enable_performance_monitoring': 'ENABLE_PERFORMANCE_MONITORING'
+        }
+
+        # Apply main transcription configuration
         for config_key, env_var in env_mapping.items():
             if config_key in transcription_config:
                 # Store original value
@@ -324,7 +415,38 @@ class EnhancedPipelineWrapper:
                     value = "true" if value else "false"
                 os.environ[env_var] = str(value)
 
-                logger.info(f"Set {env_var}={value}")
+                logger.info(f"🎤 Set {env_var}={value}")
+
+        # Apply GPU optimization settings if GPU is enabled
+        if transcription_config.get('enable_gpu', True):
+            for config_key, env_var in gpu_optimization_mapping.items():
+                # Store original value
+                original_env[env_var] = os.environ.get(env_var)
+
+                # Set default GPU optimization values
+                default_value = "true"
+                os.environ[env_var] = default_value
+                logger.debug(f"🚀 Set {env_var}={default_value}")
+
+        # Handle temporary Deepgram override (compatibility with transcription_config.py)
+        method = transcription_config.get('method', 'auto')
+        if method == 'deepgram':
+            original_env['FORCE_DEEPGRAM_TRANSCRIPTION'] = os.environ.get('FORCE_DEEPGRAM_TRANSCRIPTION')
+            os.environ['FORCE_DEEPGRAM_TRANSCRIPTION'] = "true"
+            logger.info("🔄 Enabled temporary Deepgram override")
+        elif 'FORCE_DEEPGRAM_TRANSCRIPTION' in os.environ:
+            # Clear override if method is not deepgram
+            original_env['FORCE_DEEPGRAM_TRANSCRIPTION'] = os.environ.get('FORCE_DEEPGRAM_TRANSCRIPTION')
+            os.environ['FORCE_DEEPGRAM_TRANSCRIPTION'] = "false"
+            logger.info("🔄 Disabled temporary Deepgram override")
+
+        # Log final transcription configuration
+        logger.info(f"🎤 Final transcription config:")
+        logger.info(f"   Method: {os.environ.get('TRANSCRIPTION_METHOD', 'auto')}")
+        logger.info(f"   GPU enabled: {os.environ.get('ENABLE_GPU_TRANSCRIPTION', 'true')}")
+        logger.info(f"   Fallback enabled: {os.environ.get('ENABLE_FALLBACK', 'true')}")
+        logger.info(f"   Cost optimization: {os.environ.get('COST_OPTIMIZATION', 'true')}")
+        logger.info(f"   Deepgram override: {os.environ.get('FORCE_DEEPGRAM_TRANSCRIPTION', 'false')}")
 
         return original_env
 

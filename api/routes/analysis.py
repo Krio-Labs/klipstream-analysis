@@ -341,30 +341,54 @@ async def start_analysis(
             logger.error(f"Failed to create job {job_id}: {str(e)}")
             # Continue anyway since the job is in Convex queue
         
-        # Create progress info
+        # Create progress info with enhanced stage tracking
         progress = ProgressInfo(
             percentage=0.0,
             current_stage=ProcessingStage.QUEUED,
             stages_completed=0,
             total_stages=7,  # Queued, Downloading, Generating Waveform, Transcribing, Fetching Chat, Analyzing, Finding Highlights, Completed
-            estimated_completion_seconds=3600,
-            estimated_completion_time=datetime.utcnow() + timedelta(seconds=3600),
-            stage_progress={}
+            estimated_completion_seconds=queue_result.get('estimatedWaitTime', 3600) // 1000,  # Convert ms to seconds
+            estimated_completion_time=datetime.utcnow() + timedelta(seconds=queue_result.get('estimatedWaitTime', 3600) // 1000),
+            stage_progress={
+                "queue_position": queue_result.get('queuePosition', 1),
+                "estimated_wait_time_ms": queue_result.get('estimatedWaitTime', 3600000)
+            }
         )
-        
-        # Return immediate response
+
+        # Enhanced metadata with URL update information
+        metadata = {
+            "api_version": "2.0.0",
+            "status_url": f"/api/v1/analysis/{job_id}/status",
+            "stream_url": f"/api/v1/analysis/{job_id}/stream",
+            "convex_video_id": convex_video_id,
+            "team_id": team_id,
+            "queue_position": queue_result.get('queuePosition', 1),
+            "expected_urls": {
+                "video_url": f"gs://klipstream-vods-raw/{video_id}/video.mp4",
+                "audio_url": f"gs://klipstream-vods-raw/{video_id}/audio.mp3",
+                "waveform_url": f"gs://klipstream-vods-raw/{video_id}/waveform.json",
+                "transcript_url": f"gs://klipstream-transcripts/{video_id}/segments.csv",
+                "transcriptWords_url": f"gs://klipstream-transcripts/{video_id}/words.csv",
+                "chat_url": f"gs://klipstream-chatlogs/{video_id}/chat.csv",
+                "analysis_url": f"gs://klipstream-analysis/{video_id}/audio/audio_{video_id}_sentiment.csv"
+            },
+            "transcription_config": request.transcription_config.dict() if request.transcription_config else {
+                "method": "auto",
+                "enable_gpu": True,
+                "enable_fallback": True,
+                "cost_optimization": True
+            }
+        }
+
+        # Return immediate response with enhanced information
         response = AnalysisResponse(
             status="success",
-            message="Analysis started successfully",
+            message="Analysis started successfully and added to processing queue",
             timestamp=datetime.utcnow(),
             job_id=job_id,
             video_id=video_id,
             progress=progress,
-            metadata={
-                "api_version": "2.0.0",
-                "status_url": f"/api/v1/analysis/{job_id}/status",
-                "stream_url": f"/api/v1/analysis/{job_id}/stream"
-            }
+            metadata=metadata
         )
         
         logger.info(f"Analysis job {job_id} created successfully for video {video_id}")

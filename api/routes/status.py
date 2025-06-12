@@ -246,21 +246,44 @@ async def stream_analysis_status(job_id: str):
                                 "support_reference": current_job.error_info.support_reference
                             }
 
-                        # Add results if job completed
-                        if current_job.status == ProcessingStage.COMPLETED and current_job.results:
+                        # Add enhanced results if job completed
+                        if current_job.status == ProcessingStage.COMPLETED:
                             status_data["event"] = "completed"
-                            status_data["results"] = {
-                                "video_file_url": current_job.results.video_file_url,
-                                "transcript_file_url": current_job.results.transcript_file_url,
-                                "highlights_file_url": current_job.results.highlights_file_url,
-                                "analysis_report_url": current_job.results.analysis_report_url,
-                                "video_duration_seconds": current_job.results.video_duration_seconds,
-                                "transcript_word_count": current_job.results.transcript_word_count,
-                                "highlights_count": current_job.results.highlights_count,
-                                "sentiment_score": current_job.results.sentiment_score,
-                                "processing_time_seconds": current_job.results.processing_time_seconds,
-                                "file_sizes": current_job.results.file_sizes
+
+                            # Enhanced results with all URL fields from main.py pipeline
+                            results = {
+                                # Core file URLs (updated to match main.py output)
+                                "video_url": f"gs://klipstream-vods-raw/{current_job.video_id}/video.mp4",
+                                "audio_url": f"gs://klipstream-vods-raw/{current_job.video_id}/audio.mp3",
+                                "waveform_url": f"gs://klipstream-vods-raw/{current_job.video_id}/waveform.json",
+                                "transcript_url": f"gs://klipstream-transcripts/{current_job.video_id}/segments.csv",
+                                "transcriptWords_url": f"gs://klipstream-transcripts/{current_job.video_id}/words.csv",
+                                "chat_url": f"gs://klipstream-chatlogs/{current_job.video_id}/chat.csv",
+                                "analysis_url": f"gs://klipstream-analysis/{current_job.video_id}/audio/audio_{current_job.video_id}_sentiment.csv",
+
+                                # Additional analysis URLs
+                                "highlights_url": f"gs://klipstream-analysis/{current_job.video_id}/audio/audio_{current_job.video_id}_highlights.csv",
+                                "audio_sentiment_url": f"gs://klipstream-analysis/{current_job.video_id}/audio/audio_{current_job.video_id}_sentiment.csv",
+                                "chat_sentiment_url": f"gs://klipstream-analysis/{current_job.video_id}/chat/{current_job.video_id}_chat_sentiment.csv",
+                                "integrated_analysis_url": f"gs://klipstream-analysis/{current_job.video_id}/integrated_{current_job.video_id}.json"
                             }
+
+                            # Add job results if available
+                            if current_job.results:
+                                results.update({
+                                    "video_duration_seconds": current_job.results.video_duration_seconds,
+                                    "transcript_word_count": current_job.results.transcript_word_count,
+                                    "highlights_count": current_job.results.highlights_count,
+                                    "sentiment_score": current_job.results.sentiment_score,
+                                    "processing_time_seconds": current_job.results.processing_time_seconds,
+                                    "file_sizes": current_job.results.file_sizes
+                                })
+
+                            status_data["results"] = results
+
+                            # Add pipeline metadata if available
+                            if hasattr(current_job, 'pipeline_metadata'):
+                                status_data["pipeline_metadata"] = current_job.pipeline_metadata
 
                         # Send the update
                         event_type = status_data["event"]
